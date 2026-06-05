@@ -44,6 +44,19 @@ EMAIL_BENCHMARKS = {
     "bounce_rate": ("Bounce Warning", 2),
 }
 
+PERFORMANCE_COLUMNS = [
+    "sent",
+    "delivered",
+    "opens",
+    "open_rate",
+    "clicks",
+    "click_rate",
+    "unsubscribes",
+    "unsubscribe_rate",
+    "bounces",
+    "bounce_rate",
+]
+
 
 # --------------------------------
 # DATA CLEANING HELPERS
@@ -106,6 +119,7 @@ def clean_database(df):
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df["customer_type"] = df["customer_type"].astype(str).str.strip()
     df["campaign_name"] = df["campaign_name"].fillna("").astype(str).str.strip()
+    df["has_performance_data"] = df[PERFORMANCE_COLUMNS].notna().any(axis=1)
 
     numeric_columns = [
         "active_audience",
@@ -130,6 +144,10 @@ def clean_database(df):
 
     df["channel"] = df.apply(detect_channel, axis=1)
     df["audience_segment"] = df["customer_type"].apply(clean_segment)
+
+    sms_rows = df["channel"].eq("SMS")
+    df.loc[sms_rows, "new_imports"] = df.loc[sms_rows, "active_audience"]
+
     df["campaign_name"] = df.apply(
         lambda row: row["campaign_name"]
         if row["campaign_name"]
@@ -138,11 +156,15 @@ def clean_database(df):
     )
 
     df["sent"] = df.apply(
-        lambda row: row["sent"] if row["sent"] else row["active_audience"],
+        lambda row: row["sent"]
+        if row["sent"] or not row["has_performance_data"]
+        else row["active_audience"],
         axis=1,
     )
     df["delivered"] = df.apply(
-        lambda row: row["delivered"] if row["delivered"] else max(row["sent"] - row["bounces"], 0),
+        lambda row: row["delivered"]
+        if row["delivered"] or not row["has_performance_data"]
+        else max(row["sent"] - row["bounces"], 0),
         axis=1,
     )
 
@@ -171,7 +193,6 @@ def clean_database(df):
         axis=1,
     )
 
-    df["net_growth"] = df["new_imports"] - df["unsubscribes"]
     df["date_tag"] = df["date"].dt.strftime("%Y-%m-%d")
     return df.sort_values(["date", "channel", "audience_segment"]).reset_index(drop=True)
 
@@ -244,6 +265,26 @@ def load_database():
 # --------------------------------
 # SUMMARY HELPERS
 # --------------------------------
+def latest_audience(data):
+    if data.empty:
+        return 0
+
+    email_data = data[data["channel"] == "Email"]
+    sms_data = data[data["channel"] == "SMS"]
+
+    email_audience = 0
+    if not email_data.empty:
+        email_audience = (
+            email_data.sort_values("date")
+            .groupby("audience_segment", as_index=False)
+            .tail(1)["active_audience"]
+            .sum()
+        )
+
+    sms_audience = sms_data["active_audience"].sum()
+    return email_audience + sms_audience
+
+
 def total_metrics(data):
     sent = data["sent"].sum()
     delivered = data["delivered"].sum()
@@ -253,7 +294,7 @@ def total_metrics(data):
     bounces = data["bounces"].sum()
 
     return {
-        "active_audience": data["active_audience"].sum(),
+        "active_audience": latest_audience(data),
         "new_imports": data["new_imports"].sum(),
         "sent": sent,
         "delivered": delivered,
@@ -272,7 +313,7 @@ def weekly_summary(data):
     summary = (
         data.groupby(["date", "date_tag", "audience_segment"], as_index=False)
         .agg(
-            active_audience=("active_audience", "sum"),
+            active_audience=("active_audience", "max"),
             new_imports=("new_imports", "sum"),
             sent=("sent", "sum"),
             delivered=("delivered", "sum"),
@@ -280,7 +321,6 @@ def weekly_summary(data):
             clicks=("clicks", "sum"),
             unsubscribes=("unsubscribes", "sum"),
             bounces=("bounces", "sum"),
-            net_growth=("net_growth", "sum"),
         )
         .sort_values(["date", "audience_segment"])
     )
@@ -400,6 +440,7 @@ def render_primary_kpis(data, channel=None):
 
 def render_campaign_ranking(data, channel):
     st.subheader("Top Performing Campaigns")
+    data = data[data["has_performance_data"]].copy()
     if data.empty:
         st.info(f"No {channel} campaign data for the selected filters.")
         return
@@ -486,10 +527,14 @@ def render_executive_overview(data):
     st.markdown("**Executive KPIs**")
     render_primary_kpis(data, channel=selected_channel)
 
-    render_funnel(data, selected_channel, f"overview_{selected_channel.lower()}_funnel")
+    performance_data = data[data["has_performance_data"]].copy()
+    if performance_data.empty:
+        st.info(f"No {selected_channel} performance metrics yet for the selected week range.")
+    else:
+        render_funnel(performance_data, selected_channel, f"overview_{selected_channel.lower()}_funnel")
 
     st.markdown("**Weekly Trends**")
-    summary = weekly_summary(data)
+    summary = weekly_summary(performance_data)
 
     row1_left, row1_right = st.columns(2)
     with row1_left:
@@ -557,9 +602,14 @@ def render_email_performance(data):
         return
 
     render_primary_kpis(data, channel="Email")
-    render_funnel(data, "Email", "email_performance_funnel")
+    performance_data = data[data["has_performance_data"]].copy()
+    if performance_data.empty:
+        st.info("No Email performance metrics yet for the selected week range. Audience totals still use the latest snapshot.")
+        return
 
-    summary = weekly_summary(data)
+    render_funnel(performance_data, "Email", "email_performance_funnel")
+
+    summary = weekly_summary(performance_data)
     render_rate_trend(summary, "open_rate", "Open Rate Trend", benchmark=True, chart_key="email_open_rate")
     render_rate_trend(summary, "click_rate", "Click Rate Trend", benchmark=True, chart_key="email_click_rate")
     render_rate_trend(
@@ -571,7 +621,7 @@ def render_email_performance(data):
     )
     render_rate_trend(summary, "bounce_rate", "Bounce Rate Trend", benchmark=True, chart_key="email_bounce_rate")
 
-    render_campaign_ranking(data, "Email")
+    render_campaign_ranking(performance_data, "Email")
 
 
 def render_sms_performance(data):
@@ -586,9 +636,14 @@ def render_sms_performance(data):
         return
 
     render_primary_kpis(data, channel="SMS")
-    render_funnel(data, "SMS", "sms_performance_funnel")
+    performance_data = data[data["has_performance_data"]].copy()
+    if performance_data.empty:
+        st.info("No SMS performance metrics yet for the selected week range. Audience totals still use SMS active audience as the new-user batch size.")
+        return
 
-    summary = weekly_summary(data)
+    render_funnel(performance_data, "SMS", "sms_performance_funnel")
+
+    summary = weekly_summary(performance_data)
     render_rate_trend(summary, "click_rate", "SMS Click Rate Trend", chart_key="sms_click_rate")
     render_rate_trend(
         summary,
@@ -597,7 +652,7 @@ def render_sms_performance(data):
         chart_key="sms_unsubscribe_rate",
     )
 
-    render_campaign_ranking(data, "SMS")
+    render_campaign_ranking(performance_data, "SMS")
 
 
 def render_audience_movement(data):
@@ -617,7 +672,6 @@ def render_audience_movement(data):
             active_audience=("active_audience", "max"),
             new_imports=("new_imports", "sum"),
             unsubscribes=("unsubscribes", "sum"),
-            net_growth=("net_growth", "sum"),
         )
         .sort_values(["date", "channel", "audience_segment"])
     )
@@ -655,19 +709,6 @@ def render_audience_movement(data):
     fig.update_xaxes(title="Week")
     st.plotly_chart(fig, width="stretch", key="audience_imports_unsubscribes")
 
-    fig = px.bar(
-        audience,
-        x="date_tag",
-        y="net_growth",
-        color="audience_segment",
-        barmode="group",
-        pattern_shape="channel",
-        title="Net Growth by Weekly Date Tag",
-        category_orders={"date_tag": order},
-    )
-    fig.update_xaxes(title="Week")
-    st.plotly_chart(fig, width="stretch", key="audience_net_growth")
-
     st.dataframe(
         audience.sort_values(["date", "channel", "audience_segment"], ascending=[False, True, True]),
         width="stretch",
@@ -697,9 +738,17 @@ Cleaning rules:
 
 - `opene_rate` is normalized to `open_rate`
 - blank rates are calculated from counts
-- blank `sent` uses `active_audience`
-- blank `delivered` uses `sent - bounces`
+- rows with no send/performance fields are treated as audience snapshots, not 0% campaign results
+- for Email, `active_audience` is the current total audience, so KPI totals use the latest selected snapshot per segment
+- for SMS, `active_audience` is the new-user batch size; `new_imports` is automatically aligned to the same number
+- blank `sent` uses `active_audience` only when the row has campaign performance data
+- blank `delivered` uses `sent - bounces` only when the row has campaign performance data
 - SMS rows are detected when `campaign_name` or `customer_type` contains `SMS`
+
+Update cadence:
+
+- Email audience snapshots update on Wednesday
+- SMS audience snapshots update on Monday, Wednesday, and Friday
         """
     )
 
