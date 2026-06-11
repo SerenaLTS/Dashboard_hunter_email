@@ -69,11 +69,27 @@ def pct(numerator, denominator):
 
 def normalize_rate(value):
     if pd.isna(value):
-        return 0
+        return pd.NA
     value = float(value)
     if value <= 1:
         return value * 100
     return value
+
+
+def clean_rate(row, rate_col, numerator_col, denominator_col):
+    if pd.notna(row[rate_col]):
+        return normalize_rate(row[rate_col])
+    if row[numerator_col] and row[denominator_col]:
+        return pct(row[numerator_col], row[denominator_col])
+    return pd.NA
+
+
+def weighted_rate(data, rate_col, weight_col):
+    rate_data = data[[rate_col, weight_col]].dropna()
+    rate_data = rate_data[rate_data[weight_col] > 0]
+    if rate_data.empty:
+        return 0
+    return (rate_data[rate_col] * rate_data[weight_col]).sum() / rate_data[weight_col].sum()
 
 
 def normalize_columns(df):
@@ -121,22 +137,21 @@ def clean_database(df):
     df["campaign_name"] = df["campaign_name"].fillna("").astype(str).str.strip()
     df["has_performance_data"] = df[PERFORMANCE_COLUMNS].notna().any(axis=1)
 
-    numeric_columns = [
+    count_columns = [
         "active_audience",
         "new_imports",
         "sent",
         "delivered",
         "opens",
-        "open_rate",
         "clicks",
-        "click_rate",
         "unsubscribes",
-        "unsubscribe_rate",
         "bounces",
-        "bounce_rate",
     ]
-    for col in numeric_columns:
+    rate_columns = ["open_rate", "click_rate", "unsubscribe_rate", "bounce_rate"]
+    for col in count_columns:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+    for col in rate_columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df = df.dropna(subset=["date"])
     df = df[df["customer_type"].str.lower().ne("nan")]
@@ -168,30 +183,13 @@ def clean_database(df):
         axis=1,
     )
 
-    df["open_rate"] = df.apply(
-        lambda row: pct(row["opens"], row["delivered"])
-        if row["opens"] and row["delivered"]
-        else normalize_rate(row["open_rate"]),
-        axis=1,
-    )
-    df["click_rate"] = df.apply(
-        lambda row: pct(row["clicks"], row["delivered"])
-        if row["clicks"] and row["delivered"]
-        else normalize_rate(row["click_rate"]),
-        axis=1,
-    )
+    df["open_rate"] = df.apply(lambda row: clean_rate(row, "open_rate", "opens", "delivered"), axis=1)
+    df["click_rate"] = df.apply(lambda row: clean_rate(row, "click_rate", "clicks", "delivered"), axis=1)
     df["unsubscribe_rate"] = df.apply(
-        lambda row: pct(row["unsubscribes"], row["delivered"])
-        if row["unsubscribes"] and row["delivered"]
-        else normalize_rate(row["unsubscribe_rate"]),
+        lambda row: clean_rate(row, "unsubscribe_rate", "unsubscribes", "delivered"),
         axis=1,
     )
-    df["bounce_rate"] = df.apply(
-        lambda row: pct(row["bounces"], row["sent"])
-        if row["bounces"] and row["sent"]
-        else normalize_rate(row["bounce_rate"]),
-        axis=1,
-    )
+    df["bounce_rate"] = df.apply(lambda row: clean_rate(row, "bounce_rate", "bounces", "sent"), axis=1)
 
     df["date_tag"] = df["date"].dt.strftime("%Y-%m-%d")
     return df.sort_values(["date", "channel", "audience_segment"]).reset_index(drop=True)
@@ -302,10 +300,10 @@ def total_metrics(data):
         "clicks": clicks,
         "unsubscribes": unsubscribes,
         "bounces": bounces,
-        "open_rate": pct(opens, delivered),
-        "click_rate": pct(clicks, delivered),
-        "unsubscribe_rate": pct(unsubscribes, delivered),
-        "bounce_rate": pct(bounces, sent),
+        "open_rate": weighted_rate(data, "open_rate", "delivered"),
+        "click_rate": weighted_rate(data, "click_rate", "delivered"),
+        "unsubscribe_rate": weighted_rate(data, "unsubscribe_rate", "delivered"),
+        "bounce_rate": weighted_rate(data, "bounce_rate", "sent"),
     }
 
 
@@ -321,13 +319,16 @@ def weekly_summary(data):
             clicks=("clicks", "sum"),
             unsubscribes=("unsubscribes", "sum"),
             bounces=("bounces", "sum"),
+            open_rate=("open_rate", lambda values: weighted_rate(data.loc[values.index], "open_rate", "delivered")),
+            click_rate=("click_rate", lambda values: weighted_rate(data.loc[values.index], "click_rate", "delivered")),
+            unsubscribe_rate=(
+                "unsubscribe_rate",
+                lambda values: weighted_rate(data.loc[values.index], "unsubscribe_rate", "delivered"),
+            ),
+            bounce_rate=("bounce_rate", lambda values: weighted_rate(data.loc[values.index], "bounce_rate", "sent")),
         )
         .sort_values(["date", "audience_segment"])
     )
-    summary["open_rate"] = summary.apply(lambda row: pct(row["opens"], row["delivered"]), axis=1)
-    summary["click_rate"] = summary.apply(lambda row: pct(row["clicks"], row["delivered"]), axis=1)
-    summary["unsubscribe_rate"] = summary.apply(lambda row: pct(row["unsubscribes"], row["delivered"]), axis=1)
-    summary["bounce_rate"] = summary.apply(lambda row: pct(row["bounces"], row["sent"]), axis=1)
     return summary
 
 
@@ -353,6 +354,7 @@ def add_email_benchmark(fig, metric):
 
 
 def render_rate_trend(data, metric, title, benchmark=False, chart_key=None):
+    data = data.dropna(subset=[metric]).copy()
     if data.empty:
         st.info(f"No data for {title}.")
         return
@@ -661,6 +663,8 @@ def render_audience_movement(data):
         st.info("No audience data for the selected week range.")
         return
 
+    st.caption("Total audience uses the Email audience base. SMS active audience is treated as the new-user batch size.")
+
     data = apply_segment_filter(data, "Audience segment", "audience_segments")
     if data.empty:
         st.info("No audience data for the selected section filters.")
@@ -785,7 +789,7 @@ Expected columns:
 Cleaning rules:
 
 - `opene_rate` is normalized to `open_rate`
-- blank rates are calculated from counts
+- blank rates stay blank unless count data is available to calculate them
 - rows with no send/performance fields are treated as audience snapshots, not 0% campaign results
 - for Email, `active_audience` is the current total audience, so KPI totals use the latest selected snapshot per segment
 - for SMS, `active_audience` is the new-user batch size; `new_imports` is automatically aligned to the same number
@@ -805,6 +809,10 @@ df = clean_database(raw_df)
 
 if not Path(DATABASE_FILE).exists():
     st.warning(f"`{DATABASE_FILE}` was not found. Showing sample data.")
+
+if df.empty:
+    st.error("No valid rows found. Please check that the database has valid dates and customer types.")
+    st.stop()
 
 
 # --------------------------------
