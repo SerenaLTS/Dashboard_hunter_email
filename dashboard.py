@@ -661,30 +661,36 @@ def render_audience_movement(data):
         st.info("No audience data for the selected week range.")
         return
 
-    data = apply_channel_segment_filter(data, "audience")
+    data = apply_segment_filter(data, "Audience segment", "audience_segments")
     if data.empty:
         st.info("No audience data for the selected section filters.")
         return
 
-    audience = (
-        data.groupby(["date", "date_tag", "channel", "audience_segment"], as_index=False)
+    email_audience = (
+        data[data["channel"] == "Email"]
+        .groupby(["date", "date_tag", "audience_segment"], as_index=False)
         .agg(
             active_audience=("active_audience", "max"),
-            new_imports=("new_imports", "sum"),
-            unsubscribes=("unsubscribes", "sum"),
         )
-        .sort_values(["date", "channel", "audience_segment"])
+        .sort_values(["date", "audience_segment"])
     )
-    order = date_order(audience)
 
-    audience_delta = audience.sort_values(["channel", "audience_segment", "date"]).copy()
-    audience_delta["previous_audience"] = audience_delta.groupby(
-        ["channel", "audience_segment"]
-    )["active_audience"].shift(1)
-    audience_delta["audience_change"] = (
-        audience_delta["active_audience"] - audience_delta["previous_audience"]
+    if email_audience.empty:
+        st.info("No Email audience base data for the selected filters.")
+        return
+
+    order = date_order(email_audience)
+    total_audience = (
+        email_audience.groupby(["date", "date_tag"], as_index=False)
+        .agg(active_audience=("active_audience", "sum"))
+        .sort_values("date")
     )
-    audience_delta = audience_delta.dropna(subset=["previous_audience"]).copy()
+    total_audience["previous_audience"] = total_audience["active_audience"].shift(1)
+    total_audience["audience_change"] = (
+        total_audience["active_audience"] - total_audience["previous_audience"]
+    )
+
+    audience_delta = total_audience.dropna(subset=["previous_audience"]).copy()
     audience_delta["change_type"] = audience_delta["audience_change"].apply(
         lambda value: "Increase" if value >= 0 else "Decrease"
     )
@@ -696,11 +702,13 @@ def render_audience_movement(data):
             audience_delta,
             x="date_tag",
             y="audience_change",
-            color="audience_segment",
-            barmode="group",
-            pattern_shape="change_type",
-            title="Weekly Audience Change",
+            color="change_type",
+            title="Total Audience Change",
             category_orders={"date_tag": order},
+            color_discrete_map={
+                "Increase": "#2E7D32",
+                "Decrease": "#C62828",
+            },
             hover_data={
                 "previous_audience": ":,.0f",
                 "active_audience": ":,.0f",
@@ -714,39 +722,43 @@ def render_audience_movement(data):
         st.plotly_chart(fig, width="stretch", key="audience_weekly_change")
 
     fig = px.line(
-        audience,
+        total_audience,
         x="date_tag",
         y="active_audience",
-        color="audience_segment",
-        line_dash="channel",
         markers=True,
-        title="Active Audience Trend",
+        title="Total Audience Trend",
         category_orders={"date_tag": order},
     )
     fig.update_xaxes(title="Week")
+    fig.update_yaxes(title="Active Audience")
     st.plotly_chart(fig, width="stretch", key="audience_active_trend")
 
-    movement = audience.melt(
-        id_vars=["date_tag", "channel", "audience_segment"],
-        value_vars=["new_imports", "unsubscribes"],
-        var_name="metric",
-        value_name="contacts",
+    unsubscribes = (
+        data.groupby(["date", "date_tag", "channel"], as_index=False)
+        .agg(unsubscribes=("unsubscribes", "sum"))
+        .sort_values(["date", "channel"])
     )
+    unsubscribes["unsubscribe_type"] = unsubscribes["channel"] + " Unsubscribes"
+
     fig = px.bar(
-        movement,
+        unsubscribes,
         x="date_tag",
-        y="contacts",
-        color="metric",
+        y="unsubscribes",
+        color="unsubscribe_type",
         barmode="group",
-        pattern_shape="channel",
-        title="New Imports vs Unsubscribes",
+        title="Email vs SMS Unsubscribes",
         category_orders={"date_tag": order},
+        color_discrete_map={
+            "Email Unsubscribes": "#1565C0",
+            "SMS Unsubscribes": "#6A1B9A",
+        },
     )
     fig.update_xaxes(title="Week")
-    st.plotly_chart(fig, width="stretch", key="audience_imports_unsubscribes")
+    fig.update_yaxes(title="Unsubscribes")
+    st.plotly_chart(fig, width="stretch", key="audience_unsubscribes_by_channel")
 
     st.dataframe(
-        audience.sort_values(["date", "channel", "audience_segment"], ascending=[False, True, True]),
+        email_audience.sort_values(["date", "audience_segment"], ascending=[False, True]),
         width="stretch",
         hide_index=True,
     )
