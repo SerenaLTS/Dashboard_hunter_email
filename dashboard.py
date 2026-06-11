@@ -677,6 +677,42 @@ def render_audience_movement(data):
     )
     order = date_order(audience)
 
+    audience_delta = audience.sort_values(["channel", "audience_segment", "date"]).copy()
+    audience_delta["previous_audience"] = audience_delta.groupby(
+        ["channel", "audience_segment"]
+    )["active_audience"].shift(1)
+    audience_delta["audience_change"] = (
+        audience_delta["active_audience"] - audience_delta["previous_audience"]
+    )
+    audience_delta = audience_delta.dropna(subset=["previous_audience"]).copy()
+    audience_delta["change_type"] = audience_delta["audience_change"].apply(
+        lambda value: "Increase" if value >= 0 else "Decrease"
+    )
+
+    if audience_delta.empty:
+        st.info("Select at least two weeks to see audience change.")
+    else:
+        fig = px.bar(
+            audience_delta,
+            x="date_tag",
+            y="audience_change",
+            color="audience_segment",
+            barmode="group",
+            pattern_shape="change_type",
+            title="Weekly Audience Change",
+            category_orders={"date_tag": order},
+            hover_data={
+                "previous_audience": ":,.0f",
+                "active_audience": ":,.0f",
+                "audience_change": "+,.0f",
+                "change_type": False,
+            },
+        )
+        fig.add_hline(y=0, line_color="#8A94A6", line_width=1)
+        fig.update_xaxes(title="Week")
+        fig.update_yaxes(title="Audience Change")
+        st.plotly_chart(fig, width="stretch", key="audience_weekly_change")
+
     fig = px.line(
         audience,
         x="date_tag",
