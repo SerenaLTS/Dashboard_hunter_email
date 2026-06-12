@@ -694,6 +694,48 @@ def render_audience_movement(data):
         total_audience["active_audience"] - total_audience["previous_audience"]
     )
 
+    latest_audience_row = total_audience.iloc[-1]
+
+    unsubscribes = (
+        data.groupby(["date", "date_tag", "channel"], as_index=False)
+        .agg(
+            unsubscribes=("unsubscribes", "sum"),
+            delivered=("delivered", "sum"),
+        )
+        .sort_values(["date", "channel"])
+    )
+    unsubscribes["unsubscribe_rate"] = unsubscribes.apply(
+        lambda row: pct(row["unsubscribes"], row["delivered"]),
+        axis=1,
+    )
+    unsubscribes["unsubscribe_type"] = unsubscribes["channel"] + " Unsubscribes"
+
+    latest_unsubscribes = (
+        unsubscribes.sort_values("date")
+        .groupby("channel", as_index=False)
+        .tail(1)
+        .set_index("channel")
+    )
+
+    kpi1, kpi2, kpi3 = st.columns(3)
+    audience_delta_value = latest_audience_row["audience_change"]
+    kpi1.metric(
+        "Total Audience",
+        f"{latest_audience_row['active_audience']:,.0f}",
+        None if pd.isna(audience_delta_value) else f"{audience_delta_value:+,.0f} vs previous week",
+    )
+    for column, channel in [(kpi2, "Email"), (kpi3, "SMS")]:
+        if channel in latest_unsubscribes.index:
+            latest_row = latest_unsubscribes.loc[channel]
+            column.metric(
+                f"{channel} Unsubscribes",
+                f"{latest_row['unsubscribes']:,.0f}",
+                f"{latest_row['unsubscribe_rate']:.2f}% rate",
+                delta_color="off",
+            )
+        else:
+            column.metric(f"{channel} Unsubscribes", "0", "No data", delta_color="off")
+
     audience_delta = total_audience.dropna(subset=["previous_audience"]).copy()
     audience_delta["change_type"] = audience_delta["audience_change"].apply(
         lambda value: "Increase" if value >= 0 else "Decrease"
@@ -737,13 +779,6 @@ def render_audience_movement(data):
     fig.update_yaxes(title="Active Audience")
     st.plotly_chart(fig, width="stretch", key="audience_active_trend")
 
-    unsubscribes = (
-        data.groupby(["date", "date_tag", "channel"], as_index=False)
-        .agg(unsubscribes=("unsubscribes", "sum"))
-        .sort_values(["date", "channel"])
-    )
-    unsubscribes["unsubscribe_type"] = unsubscribes["channel"] + " Unsubscribes"
-
     fig = px.bar(
         unsubscribes,
         x="date_tag",
@@ -760,6 +795,27 @@ def render_audience_movement(data):
     fig.update_xaxes(title="Week")
     fig.update_yaxes(title="Unsubscribes")
     st.plotly_chart(fig, width="stretch", key="audience_unsubscribes_by_channel")
+
+    rate_data = unsubscribes[unsubscribes["delivered"] > 0].copy()
+    if rate_data.empty:
+        st.info("No delivered counts available to calculate unsubscribe rate.")
+    else:
+        fig = px.line(
+            rate_data,
+            x="date_tag",
+            y="unsubscribe_rate",
+            color="unsubscribe_type",
+            markers=True,
+            title="Email vs SMS Unsubscribe Rate",
+            category_orders={"date_tag": order},
+            color_discrete_map={
+                "Email Unsubscribes": "#1565C0",
+                "SMS Unsubscribes": "#6A1B9A",
+            },
+        )
+        fig.update_xaxes(title="Week")
+        fig.update_yaxes(title="Unsubscribe Rate", ticksuffix="%")
+        st.plotly_chart(fig, width="stretch", key="audience_unsubscribe_rate_by_channel")
 
     st.dataframe(
         email_audience.sort_values(["date", "audience_segment"], ascending=[False, True]),
