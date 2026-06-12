@@ -253,7 +253,7 @@ def make_sample_database():
 
 
 @st.cache_data
-def load_database():
+def load_database(file_modified_at=None):
     path = Path(DATABASE_FILE)
     if path.exists():
         return pd.read_excel(path, sheet_name=DATA_SHEET)
@@ -860,21 +860,26 @@ Update cadence:
         """
     )
 
-raw_df = load_database()
+# --------------------------------
+# SIDEBAR FILTERS
+# --------------------------------
+st.sidebar.header("Filters")
+
+if st.sidebar.button("Force reload data"):
+    st.cache_data.clear()
+    st.rerun()
+
+database_path = Path(DATABASE_FILE)
+database_modified_at = database_path.stat().st_mtime if database_path.exists() else None
+raw_df = load_database(database_modified_at)
 df = clean_database(raw_df)
 
-if not Path(DATABASE_FILE).exists():
+if not database_path.exists():
     st.warning(f"`{DATABASE_FILE}` was not found. Showing sample data.")
 
 if df.empty:
     st.error("No valid rows found. Please check that the database has valid dates and customer types.")
     st.stop()
-
-
-# --------------------------------
-# SIDEBAR FILTERS
-# --------------------------------
-st.sidebar.header("Filters")
 
 week_lookup = (
     df[["date", "date_tag"]]
