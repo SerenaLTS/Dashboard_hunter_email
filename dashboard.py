@@ -485,16 +485,11 @@ def render_weekly_detail_table(data, channel):
     st.dataframe(summary[columns], width="stretch", hide_index=True)
 
 
-def previous_period_tags(selected_tags, all_tags):
-    if not selected_tags:
-        return []
-
-    period_length = len(selected_tags)
-    start_index = all_tags.index(selected_tags[0])
-    previous_start = start_index - period_length
-    if previous_start < 0:
-        return []
-    return all_tags[previous_start:start_index]
+def previous_period_range(start_date, end_date):
+    period_days = (end_date - start_date).days + 1
+    previous_end = start_date - timedelta(days=1)
+    previous_start = previous_end - timedelta(days=period_days - 1)
+    return previous_start, previous_end
 
 
 def metric_delta_labels(data, comparison_data=None):
@@ -809,7 +804,7 @@ def apply_channel_segment_filter_pair(data, comparison_data, key_prefix):
     return filtered_data, filtered_comparison
 
 
-def render_executive_overview(data, comparison_data=None):
+def render_executive_overview(data, comparison_data=None, selected_period=None, comparison_period=None):
     st.subheader("Executive Overview")
     if data.empty:
         st.info("No data for the selected week range.")
@@ -833,10 +828,14 @@ def render_executive_overview(data, comparison_data=None):
         comparison_data=comparison_data,
     )
     if not comparison_data.empty:
-        current_period_label = f"{data['date'].min().strftime('%Y-%m-%d')} to {data['date'].max().strftime('%Y-%m-%d')}"
+        if selected_period is None:
+            selected_period = (data["date"].min().date(), data["date"].max().date())
+        if comparison_period is None:
+            comparison_period = (comparison_data["date"].min().date(), comparison_data["date"].max().date())
+        current_period_label = f"{selected_period[0].strftime('%Y-%m-%d')} to {selected_period[1].strftime('%Y-%m-%d')}"
         previous_period_label = (
-            f"{comparison_data['date'].min().strftime('%Y-%m-%d')} to "
-            f"{comparison_data['date'].max().strftime('%Y-%m-%d')}"
+            f"{comparison_period[0].strftime('%Y-%m-%d')} to "
+            f"{comparison_period[1].strftime('%Y-%m-%d')}"
         )
         st.info(
             f"KPI deltas show the change from the previous comparable period "
@@ -1234,8 +1233,16 @@ else:
 st.sidebar.caption(f"{selected_week_tags[0]} -> {selected_week_tags[-1]}")
 
 week_filtered = df[df["date_tag"].isin(selected_week_tags)].copy()
-previous_week_tags = previous_period_tags(selected_week_tags, week_options)
-previous_week_filtered = df[df["date_tag"].isin(previous_week_tags)].copy()
+selected_period_start = week_filtered["date"].min().date()
+selected_period_end = week_filtered["date"].max().date()
+comparison_period_start, comparison_period_end = previous_period_range(
+    selected_period_start,
+    selected_period_end,
+)
+previous_week_filtered = df[
+    (df["date"].dt.date >= comparison_period_start)
+    & (df["date"].dt.date <= comparison_period_end)
+].copy()
 
 latest_tag = week_filtered["date"].max()
 if pd.notna(latest_tag):
@@ -1256,7 +1263,12 @@ overview_tab, email_tab, sms_tab, audience_tab, raw_tab = st.tabs(
 )
 
 with overview_tab:
-    render_executive_overview(week_filtered, previous_week_filtered)
+    render_executive_overview(
+        week_filtered,
+        previous_week_filtered,
+        selected_period=(selected_period_start, selected_period_end),
+        comparison_period=(comparison_period_start, comparison_period_end),
+    )
 
 with email_tab:
     render_email_performance(week_filtered[week_filtered["channel"] == "Email"].copy())
