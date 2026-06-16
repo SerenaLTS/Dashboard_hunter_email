@@ -763,8 +763,7 @@ def render_email_performance(data):
         st.info("No Email performance metrics yet for the selected week range. Audience totals still use the latest snapshot.")
         return
 
-    st.markdown("**Email Funnel and Segment Trends**")
-    render_funnel(performance_data, "Email", "email_performance_funnel")
+    st.markdown("**Email Segment Trends**")
 
     summary = weekly_summary(performance_data)
     render_rate_trend(summary, "open_rate", "Open Rate Trend", benchmark=True, chart_key="email_open_rate")
@@ -800,8 +799,7 @@ def render_sms_performance(data):
         st.info("No SMS performance metrics yet for the selected week range. Audience totals still use SMS active audience as the new-user batch size.")
         return
 
-    st.markdown("**SMS Funnel and Segment Trends**")
-    render_funnel(performance_data, "SMS", "sms_performance_funnel")
+    st.markdown("**SMS Segment Trends**")
 
     summary = weekly_summary(performance_data)
     render_rate_trend(summary, "click_rate", "SMS Click Rate Trend", chart_key="sms_click_rate")
