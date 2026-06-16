@@ -833,9 +833,21 @@ def render_executive_overview(data, comparison_data=None):
         comparison_data=comparison_data,
     )
     if not comparison_data.empty:
-        st.caption("KPI deltas compare the selected period with the previous period of the same length.")
+        current_period_label = f"{data['date'].min().strftime('%Y-%m-%d')} to {data['date'].max().strftime('%Y-%m-%d')}"
+        previous_period_label = (
+            f"{comparison_data['date'].min().strftime('%Y-%m-%d')} to "
+            f"{comparison_data['date'].max().strftime('%Y-%m-%d')}"
+        )
+        st.info(
+            f"KPI deltas show the change from the previous comparable period "
+            f"({previous_period_label}) to the selected period ({current_period_label}). "
+            "Percentage metrics are shown as percentage-point changes; volume metrics are shown as count changes."
+        )
     else:
-        st.caption("No KPI deltas shown because there is no previous period of the same length in the database.")
+        st.info(
+            "KPI deltas compare the selected period with the previous period of the same length. "
+            "No delta is shown because the database does not yet have enough earlier data for this selection."
+        )
 
     performance_data = data[data["has_performance_data"]].copy()
     if performance_data.empty:
