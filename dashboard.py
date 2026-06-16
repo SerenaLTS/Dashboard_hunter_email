@@ -485,44 +485,96 @@ def render_weekly_detail_table(data, channel):
     st.dataframe(summary[columns], width="stretch", hide_index=True)
 
 
-def render_primary_kpis(data, channel=None):
+def metric_delta_labels(data):
+    if data.empty:
+        return {}
+
+    weekly_rows = []
+    for _, week_data in data.groupby("date"):
+        week_metrics = total_metrics(week_data)
+        week_metrics["date"] = week_data["date"].iloc[0]
+        weekly_rows.append(week_metrics)
+
+    weekly_metrics = pd.DataFrame(weekly_rows).sort_values("date")
+    if len(weekly_metrics) < 2:
+        return {}
+
+    latest = weekly_metrics.iloc[-1]
+    previous = weekly_metrics.iloc[-2]
+    labels = {}
+    rate_metrics = {"open_rate", "click_rate", "unsubscribe_rate", "bounce_rate"}
+
+    for metric in latest.index:
+        if metric == "date":
+            continue
+        delta = latest[metric] - previous[metric]
+        if metric in rate_metrics:
+            labels[metric] = f"{delta:+.2f} pts latest vs prev week"
+        else:
+            labels[metric] = f"{delta:+,.0f} latest vs prev week"
+    return labels
+
+
+def render_primary_kpis(data, channel=None, show_delta=False):
     metrics = total_metrics(data)
+    deltas = metric_delta_labels(data) if show_delta else {}
 
     if channel == "SMS":
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}")
-        kpi2.metric("Click Rate", f"{metrics['click_rate']:.1f}%")
-        kpi3.metric("Unsubscribe Rate", f"{metrics['unsubscribe_rate']:.2f}%")
-        kpi4.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%")
+        kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}", deltas.get("active_audience"))
+        kpi2.metric("Click Rate", f"{metrics['click_rate']:.1f}%", deltas.get("click_rate"))
+        kpi3.metric(
+            "Unsubscribe Rate",
+            f"{metrics['unsubscribe_rate']:.2f}%",
+            deltas.get("unsubscribe_rate"),
+            delta_color="inverse",
+        )
+        kpi4.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%", deltas.get("bounce_rate"), delta_color="inverse")
     elif channel is None:
         email_data = data[data["channel"] == "Email"]
         email_metrics = total_metrics(email_data)
         if email_data.empty:
             kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-            kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}")
-            kpi2.metric("Click Rate", f"{metrics['click_rate']:.1f}%")
-            kpi3.metric("Unsubscribe Rate", f"{metrics['unsubscribe_rate']:.2f}%")
-            kpi4.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%")
+            kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}", deltas.get("active_audience"))
+            kpi2.metric("Click Rate", f"{metrics['click_rate']:.1f}%", deltas.get("click_rate"))
+            kpi3.metric(
+                "Unsubscribe Rate",
+                f"{metrics['unsubscribe_rate']:.2f}%",
+                deltas.get("unsubscribe_rate"),
+                delta_color="inverse",
+            )
+            kpi4.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%", deltas.get("bounce_rate"), delta_color="inverse")
         else:
             kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-            kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}")
-            kpi2.metric("Email Open Rate", f"{email_metrics['open_rate']:.1f}%")
-            kpi3.metric("Click Rate", f"{metrics['click_rate']:.1f}%")
-            kpi4.metric("Unsubscribe Rate", f"{metrics['unsubscribe_rate']:.2f}%")
-            kpi5.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%")
+            email_deltas = metric_delta_labels(email_data) if show_delta else {}
+            kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}", deltas.get("active_audience"))
+            kpi2.metric("Email Open Rate", f"{email_metrics['open_rate']:.1f}%", email_deltas.get("open_rate"))
+            kpi3.metric("Click Rate", f"{metrics['click_rate']:.1f}%", deltas.get("click_rate"))
+            kpi4.metric(
+                "Unsubscribe Rate",
+                f"{metrics['unsubscribe_rate']:.2f}%",
+                deltas.get("unsubscribe_rate"),
+                delta_color="inverse",
+            )
+            kpi5.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%", deltas.get("bounce_rate"), delta_color="inverse")
     else:
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-        kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}")
-        kpi2.metric("Open Rate", f"{metrics['open_rate']:.1f}%")
-        kpi3.metric("Click Rate", f"{metrics['click_rate']:.1f}%")
-        kpi4.metric("Unsubscribe Rate", f"{metrics['unsubscribe_rate']:.2f}%")
-        kpi5.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%")
+        kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}", deltas.get("active_audience"))
+        kpi2.metric("Open Rate", f"{metrics['open_rate']:.1f}%", deltas.get("open_rate"))
+        kpi3.metric("Click Rate", f"{metrics['click_rate']:.1f}%", deltas.get("click_rate"))
+        kpi4.metric(
+            "Unsubscribe Rate",
+            f"{metrics['unsubscribe_rate']:.2f}%",
+            deltas.get("unsubscribe_rate"),
+            delta_color="inverse",
+        )
+        kpi5.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%", deltas.get("bounce_rate"), delta_color="inverse")
 
     raw1, raw2, raw3, raw4 = st.columns(4)
-    raw1.metric("Total Sent", f"{metrics['sent']:,.0f}")
-    raw2.metric("Delivered", f"{metrics['delivered']:,.0f}")
-    raw3.metric("Clicks", f"{metrics['clicks']:,.0f}")
-    raw4.metric("New Imports", f"{metrics['new_imports']:,.0f}")
+    raw1.metric("Total Sent", f"{metrics['sent']:,.0f}", deltas.get("sent"))
+    raw2.metric("Delivered", f"{metrics['delivered']:,.0f}", deltas.get("delivered"))
+    raw3.metric("Clicks", f"{metrics['clicks']:,.0f}", deltas.get("clicks"))
+    raw4.metric("New Imports", f"{metrics['new_imports']:,.0f}", deltas.get("new_imports"))
 
 
 def trend_phrase(summary, metric, label, precision=1):
@@ -737,7 +789,7 @@ def render_executive_overview(data):
     selected_channel = data["channel"].iloc[0]
 
     st.markdown("**Executive KPIs**")
-    render_primary_kpis(data, channel=selected_channel)
+    render_primary_kpis(data, channel=selected_channel, show_delta=True)
 
     performance_data = data[data["has_performance_data"]].copy()
     if performance_data.empty:
