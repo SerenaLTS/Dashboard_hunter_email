@@ -332,6 +332,31 @@ def weekly_summary(data):
     return summary
 
 
+def weekly_total_summary(data):
+    if data.empty:
+        return pd.DataFrame()
+
+    return (
+        data.groupby(["date", "date_tag"], as_index=False)
+        .agg(
+            sent=("sent", "sum"),
+            delivered=("delivered", "sum"),
+            opens=("opens", "sum"),
+            clicks=("clicks", "sum"),
+            unsubscribes=("unsubscribes", "sum"),
+            bounces=("bounces", "sum"),
+            open_rate=("open_rate", lambda values: weighted_rate(data.loc[values.index], "open_rate", "delivered")),
+            click_rate=("click_rate", lambda values: weighted_rate(data.loc[values.index], "click_rate", "delivered")),
+            unsubscribe_rate=(
+                "unsubscribe_rate",
+                lambda values: weighted_rate(data.loc[values.index], "unsubscribe_rate", "delivered"),
+            ),
+            bounce_rate=("bounce_rate", lambda values: weighted_rate(data.loc[values.index], "bounce_rate", "sent")),
+        )
+        .sort_values("date")
+    )
+
+
 def date_order(data):
     return data.sort_values("date")["date_tag"].drop_duplicates().tolist()
 
@@ -500,6 +525,131 @@ def render_primary_kpis(data, channel=None):
     raw4.metric("New Imports", f"{metrics['new_imports']:,.0f}")
 
 
+def trend_phrase(summary, metric, label, precision=1):
+    metric_data = summary.dropna(subset=[metric]).sort_values("date")
+    if metric_data.empty:
+        return f"{label}: no recent rate data"
+
+    latest = metric_data.iloc[-1][metric]
+    if len(metric_data) == 1:
+        return f"{label}: {latest:.{precision}f}%"
+
+    previous = metric_data.iloc[-2][metric]
+    delta = latest - previous
+    direction = "up" if delta >= 0 else "down"
+    return f"{label}: {latest:.{precision}f}% ({direction} {abs(delta):.{precision}f} pts vs previous week)"
+
+
+def format_rate(value, precision=1):
+    if pd.isna(value):
+        return "N/A"
+    return f"{value:.{precision}f}%"
+
+
+def best_segment_phrase(summary, channel):
+    if summary.empty:
+        return "No segment performance data available yet."
+
+    latest_date = summary["date"].max()
+    latest_segments = summary[summary["date"] == latest_date].copy()
+    if latest_segments.empty:
+        return "No segment performance data available yet."
+
+    if channel == "Email":
+        best_row = latest_segments.sort_values(["click_rate", "open_rate"], ascending=[False, False]).iloc[0]
+        return (
+            f"Best current segment: {best_row['audience_segment']} "
+            f"({format_rate(best_row['click_rate'])} click rate, {format_rate(best_row['open_rate'])} open rate)."
+        )
+
+    best_row = latest_segments.sort_values("click_rate", ascending=False).iloc[0]
+    return f"Best current segment: {best_row['audience_segment']} ({format_rate(best_row['click_rate'])} click rate)."
+
+
+def executive_action_items(metrics, channel):
+    if channel == "Email":
+        if metrics["bounce_rate"] > EMAIL_BENCHMARKS["bounce_rate"][1]:
+            return (
+                "List quality needs attention.",
+                "Clean or suppress bounced contacts before the next send, then review source quality for recent imports.",
+                "warning",
+            )
+        if metrics["unsubscribe_rate"] > EMAIL_BENCHMARKS["unsubscribe_rate"][1]:
+            return (
+                "Audience fatigue risk is rising.",
+                "Reduce frequency for weaker segments and make the next message more clearly tied to customer intent.",
+                "warning",
+            )
+        if metrics["open_rate"] < EMAIL_BENCHMARKS["open_rate"][1]:
+            return (
+                "Top-of-funnel engagement is the constraint.",
+                "Test subject line and preheader first; keep the same offer so the next read is a clean comparison.",
+                "warning",
+            )
+        if metrics["click_rate"] < EMAIL_BENCHMARKS["click_rate"][1]:
+            return (
+                "Email is being opened, but action is weak.",
+                "Tighten the primary CTA and landing-page match before adding more campaign volume.",
+                "warning",
+            )
+        return (
+            "Email performance is healthy.",
+            "Scale the best-performing segment first, then use the detailed tab to identify which message pattern to repeat.",
+            "success",
+        )
+
+    if metrics["unsubscribe_rate"] > 1:
+        return (
+            "SMS opt-out risk needs attention.",
+            "Slow the cadence for broad segments and reserve SMS for time-sensitive or high-intent messages.",
+            "warning",
+        )
+    if metrics["click_rate"] < 20:
+        return (
+            "SMS response is below the expected action level.",
+            "Retest send timing and CTA wording before expanding the next SMS batch.",
+            "warning",
+        )
+    return (
+        "SMS is working as an action channel.",
+        "Keep SMS focused on clear next steps, and use the detailed tab to find segments that can take more volume.",
+        "success",
+    )
+
+
+def render_executive_summary(performance_data, channel):
+    if performance_data.empty:
+        return
+
+    metrics = total_metrics(performance_data)
+    weekly_totals = weekly_total_summary(performance_data)
+    segment_summary = weekly_summary(performance_data)
+    title, action, status = executive_action_items(metrics, channel)
+
+    st.markdown("**Executive Summary**")
+    summary_col, action_col, watch_col = st.columns(3)
+
+    with summary_col:
+        if status == "success":
+            st.success(title)
+        else:
+            st.warning(title)
+        st.caption(best_segment_phrase(segment_summary, channel))
+
+    with action_col:
+        st.info(action)
+
+    with watch_col:
+        if channel == "Email":
+            st.caption(trend_phrase(weekly_totals, "open_rate", "Open rate"))
+            st.caption(trend_phrase(weekly_totals, "click_rate", "Click rate"))
+            st.caption(trend_phrase(weekly_totals, "unsubscribe_rate", "Unsubscribe rate", precision=2))
+        else:
+            st.caption(trend_phrase(weekly_totals, "click_rate", "Click rate"))
+            st.caption(trend_phrase(weekly_totals, "unsubscribe_rate", "Unsubscribe rate", precision=2))
+            st.caption(trend_phrase(weekly_totals, "bounce_rate", "Bounce rate", precision=2))
+
+
 def render_campaign_ranking(data, channel):
     st.subheader("Top Performing Campaigns")
     data = data[data["has_performance_data"]].copy()
@@ -593,6 +743,7 @@ def render_executive_overview(data):
     if performance_data.empty:
         st.info(f"No {selected_channel} performance metrics yet for the selected week range.")
     else:
+        render_executive_summary(performance_data, selected_channel)
         render_funnel(performance_data, selected_channel, f"overview_{selected_channel.lower()}_funnel")
 
     st.markdown("**Weekly Trends**")
