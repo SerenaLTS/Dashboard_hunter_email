@@ -485,39 +485,39 @@ def render_weekly_detail_table(data, channel):
     st.dataframe(summary[columns], width="stretch", hide_index=True)
 
 
-def metric_delta_labels(data):
-    if data.empty:
+def previous_period_tags(selected_tags, all_tags):
+    if not selected_tags:
+        return []
+
+    period_length = len(selected_tags)
+    start_index = all_tags.index(selected_tags[0])
+    previous_start = start_index - period_length
+    if previous_start < 0:
+        return []
+    return all_tags[previous_start:start_index]
+
+
+def metric_delta_labels(data, comparison_data=None):
+    if data.empty or comparison_data is None or comparison_data.empty:
         return {}
 
-    weekly_rows = []
-    for _, week_data in data.groupby("date"):
-        week_metrics = total_metrics(week_data)
-        week_metrics["date"] = week_data["date"].iloc[0]
-        weekly_rows.append(week_metrics)
-
-    weekly_metrics = pd.DataFrame(weekly_rows).sort_values("date")
-    if len(weekly_metrics) < 2:
-        return {}
-
-    latest = weekly_metrics.iloc[-1]
-    previous = weekly_metrics.iloc[-2]
+    current = total_metrics(data)
+    previous = total_metrics(comparison_data)
     labels = {}
     rate_metrics = {"open_rate", "click_rate", "unsubscribe_rate", "bounce_rate"}
 
-    for metric in latest.index:
-        if metric == "date":
-            continue
-        delta = latest[metric] - previous[metric]
+    for metric, current_value in current.items():
+        delta = current_value - previous[metric]
         if metric in rate_metrics:
-            labels[metric] = f"{delta:+.2f} pts latest vs prev week"
+            labels[metric] = f"{delta:+.2f} pts vs previous period"
         else:
-            labels[metric] = f"{delta:+,.0f} latest vs prev week"
+            labels[metric] = f"{delta:+,.0f} vs previous period"
     return labels
 
 
-def render_primary_kpis(data, channel=None, show_delta=False):
+def render_primary_kpis(data, channel=None, show_delta=False, comparison_data=None):
     metrics = total_metrics(data)
-    deltas = metric_delta_labels(data) if show_delta else {}
+    deltas = metric_delta_labels(data, comparison_data) if show_delta else {}
 
     if channel == "SMS":
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
@@ -546,7 +546,10 @@ def render_primary_kpis(data, channel=None, show_delta=False):
             kpi4.metric("Bounce Rate", f"{metrics['bounce_rate']:.2f}%", deltas.get("bounce_rate"), delta_color="inverse")
         else:
             kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-            email_deltas = metric_delta_labels(email_data) if show_delta else {}
+            comparison_email_data = None
+            if comparison_data is not None:
+                comparison_email_data = comparison_data[comparison_data["channel"] == "Email"]
+            email_deltas = metric_delta_labels(email_data, comparison_email_data) if show_delta else {}
             kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}", deltas.get("active_audience"))
             kpi2.metric("Email Open Rate", f"{email_metrics['open_rate']:.1f}%", email_deltas.get("open_rate"))
             kpi3.metric("Click Rate", f"{metrics['click_rate']:.1f}%", deltas.get("click_rate"))
@@ -775,13 +778,47 @@ def apply_channel_segment_filter(data, key_prefix):
     )
 
 
-def render_executive_overview(data):
+def apply_channel_segment_filter_pair(data, comparison_data, key_prefix):
+    channel_options = sorted(data["channel"].dropna().unique())
+    if not channel_options:
+        return data, comparison_data
+
+    selected_channel = st.radio(
+        "Channel",
+        channel_options,
+        horizontal=True,
+        key=f"{key_prefix}_channel",
+    )
+    channel_data = data[data["channel"] == selected_channel].copy()
+    comparison_channel_data = comparison_data[comparison_data["channel"] == selected_channel].copy()
+
+    segment_options = sorted(channel_data["audience_segment"].dropna().unique())
+    if not segment_options:
+        return channel_data, comparison_channel_data
+
+    selected_segments = st.multiselect(
+        f"{selected_channel} audience segment",
+        segment_options,
+        default=segment_options,
+        key=f"{key_prefix}_{selected_channel.lower()}_segments",
+    )
+    filtered_data = channel_data[channel_data["audience_segment"].isin(selected_segments)].copy()
+    filtered_comparison = comparison_channel_data[
+        comparison_channel_data["audience_segment"].isin(selected_segments)
+    ].copy()
+    return filtered_data, filtered_comparison
+
+
+def render_executive_overview(data, comparison_data=None):
     st.subheader("Executive Overview")
     if data.empty:
         st.info("No data for the selected week range.")
         return
 
-    data = apply_channel_segment_filter(data, "overview")
+    if comparison_data is None:
+        comparison_data = data.iloc[0:0].copy()
+
+    data, comparison_data = apply_channel_segment_filter_pair(data, comparison_data, "overview")
     if data.empty:
         st.info("No data for the selected overview filters.")
         return
@@ -789,7 +826,14 @@ def render_executive_overview(data):
     selected_channel = data["channel"].iloc[0]
 
     st.markdown("**Executive KPIs**")
-    render_primary_kpis(data, channel=selected_channel, show_delta=True)
+    render_primary_kpis(
+        data,
+        channel=selected_channel,
+        show_delta=True,
+        comparison_data=comparison_data,
+    )
+    if not comparison_data.empty:
+        st.caption("KPI deltas compare the selected period with the previous period of the same length.")
 
     performance_data = data[data["has_performance_data"]].copy()
     if performance_data.empty:
@@ -1175,6 +1219,8 @@ else:
 st.sidebar.caption(f"{selected_week_tags[0]} -> {selected_week_tags[-1]}")
 
 week_filtered = df[df["date_tag"].isin(selected_week_tags)].copy()
+previous_week_tags = previous_period_tags(selected_week_tags, week_options)
+previous_week_filtered = df[df["date_tag"].isin(previous_week_tags)].copy()
 
 latest_tag = week_filtered["date"].max()
 if pd.notna(latest_tag):
@@ -1195,7 +1241,7 @@ overview_tab, email_tab, sms_tab, audience_tab, raw_tab = st.tabs(
 )
 
 with overview_tab:
-    render_executive_overview(week_filtered)
+    render_executive_overview(week_filtered, previous_week_filtered)
 
 with email_tab:
     render_email_performance(week_filtered[week_filtered["channel"] == "Email"].copy())
