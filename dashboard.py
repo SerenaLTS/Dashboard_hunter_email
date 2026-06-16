@@ -834,6 +834,8 @@ def render_executive_overview(data, comparison_data=None):
     )
     if not comparison_data.empty:
         st.caption("KPI deltas compare the selected period with the previous period of the same length.")
+    else:
+        st.caption("No KPI deltas shown because there is no previous period of the same length in the database.")
 
     performance_data = data[data["has_performance_data"]].copy()
     if performance_data.empty:
@@ -1204,7 +1206,8 @@ if len(week_options) == 1:
     selected_week_tags = week_options
     st.sidebar.selectbox("Week", week_options, index=0)
 else:
-    default_start = max(0, len(week_options) - 4)
+    default_period_length = min(4, max(1, len(week_options) // 2))
+    default_start = max(0, len(week_options) - default_period_length)
     selected_week_range = st.sidebar.select_slider(
         "Week range",
         options=week_options,
