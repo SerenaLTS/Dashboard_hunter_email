@@ -336,65 +336,6 @@ def date_order(data):
     return data.sort_values("date")["date_tag"].drop_duplicates().tolist()
 
 
-def channel_summary(data):
-    rows = []
-    for channel, channel_data in data.groupby("channel"):
-        performance_data = channel_data[channel_data["has_performance_data"]].copy()
-        audience_metrics = total_metrics(channel_data)
-        performance_metrics = total_metrics(performance_data) if not performance_data.empty else total_metrics(channel_data.iloc[0:0])
-        rows.append(
-            {
-                "Channel": channel,
-                "Total Audience": audience_metrics["active_audience"],
-                "Campaign Rows": len(performance_data),
-                "Sent": performance_metrics["sent"],
-                "Delivered": performance_metrics["delivered"],
-                "Open Rate": performance_metrics["open_rate"] if channel == "Email" else pd.NA,
-                "Click Rate": performance_metrics["click_rate"],
-                "Unsubscribe Rate": performance_metrics["unsubscribe_rate"],
-                "Bounce Rate": performance_metrics["bounce_rate"],
-            }
-        )
-    return pd.DataFrame(rows).sort_values("Channel")
-
-
-def weekly_channel_summary(data):
-    if data.empty:
-        return pd.DataFrame()
-
-    return (
-        data.groupby(["date", "date_tag", "channel"], as_index=False)
-        .agg(
-            sent=("sent", "sum"),
-            delivered=("delivered", "sum"),
-            opens=("opens", "sum"),
-            clicks=("clicks", "sum"),
-            unsubscribes=("unsubscribes", "sum"),
-            bounces=("bounces", "sum"),
-            open_rate=("open_rate", lambda values: weighted_rate(data.loc[values.index], "open_rate", "delivered")),
-            click_rate=("click_rate", lambda values: weighted_rate(data.loc[values.index], "click_rate", "delivered")),
-            unsubscribe_rate=(
-                "unsubscribe_rate",
-                lambda values: weighted_rate(data.loc[values.index], "unsubscribe_rate", "delivered"),
-            ),
-            bounce_rate=("bounce_rate", lambda values: weighted_rate(data.loc[values.index], "bounce_rate", "sent")),
-        )
-        .sort_values(["date", "channel"])
-    )
-
-
-def latest_previous_delta(summary, channel, metric):
-    channel_summary_data = summary[summary["channel"] == channel].sort_values("date")
-    metric_data = channel_summary_data.dropna(subset=[metric])
-    if metric_data.empty:
-        return None, None
-
-    latest = metric_data.iloc[-1][metric]
-    if len(metric_data) == 1:
-        return latest, None
-    return latest, latest - metric_data.iloc[-2][metric]
-
-
 # --------------------------------
 # CHART HELPERS
 # --------------------------------
@@ -638,112 +579,77 @@ def render_executive_overview(data):
         st.info("No data for the selected week range.")
         return
 
-    data = apply_segment_filter(data, "Overview audience segment", "overview_segments")
+    data = apply_channel_segment_filter(data, "overview")
     if data.empty:
         st.info("No data for the selected overview filters.")
         return
 
+    selected_channel = data["channel"].iloc[0]
+
+    st.markdown("**Executive KPIs**")
+    render_primary_kpis(data, channel=selected_channel)
+
     performance_data = data[data["has_performance_data"]].copy()
     if performance_data.empty:
-        st.info("No campaign performance metrics yet for the selected week range.")
-        return
-
-    metrics = total_metrics(data)
-    email_data = performance_data[performance_data["channel"] == "Email"]
-    sms_data = performance_data[performance_data["channel"] == "SMS"]
-    email_metrics = total_metrics(email_data) if not email_data.empty else None
-    sms_metrics = total_metrics(sms_data) if not sms_data.empty else None
-    channel_weekly = weekly_channel_summary(performance_data)
-
-    email_open, email_open_delta = latest_previous_delta(channel_weekly, "Email", "open_rate")
-    email_click, email_click_delta = latest_previous_delta(channel_weekly, "Email", "click_rate")
-    sms_click, sms_click_delta = latest_previous_delta(channel_weekly, "SMS", "click_rate")
-    sms_unsub, sms_unsub_delta = latest_previous_delta(channel_weekly, "SMS", "unsubscribe_rate")
-
-    st.markdown("**Snapshot**")
-    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-    kpi1.metric("Total Audience", f"{metrics['active_audience']:,.0f}")
-    kpi2.metric(
-        "Email Open Rate",
-        "No data" if email_open is None else f"{email_open:.1f}%",
-        None if email_open_delta is None else f"{email_open_delta:+.1f} pts vs previous week",
-    )
-    kpi3.metric(
-        "Email Click Rate",
-        "No data" if email_click is None else f"{email_click:.1f}%",
-        None if email_click_delta is None else f"{email_click_delta:+.1f} pts vs previous week",
-    )
-    kpi4.metric(
-        "SMS Click Rate",
-        "No data" if sms_click is None else f"{sms_click:.1f}%",
-        None if sms_click_delta is None else f"{sms_click_delta:+.1f} pts vs previous week",
-    )
-    kpi5.metric(
-        "SMS Unsubscribe Rate",
-        "No data" if sms_unsub is None else f"{sms_unsub:.2f}%",
-        None if sms_unsub_delta is None else f"{sms_unsub_delta:+.2f} pts vs previous week",
-        delta_color="inverse",
-    )
-
-    st.markdown("**What Needs Attention**")
-    notes = []
-    if email_metrics:
-        if email_metrics["open_rate"] < EMAIL_BENCHMARKS["open_rate"][1]:
-            notes.append(f"Email open rate is below benchmark ({email_metrics['open_rate']:.1f}% vs 25%).")
-        if email_metrics["click_rate"] < EMAIL_BENCHMARKS["click_rate"][1]:
-            notes.append(f"Email click rate is below benchmark ({email_metrics['click_rate']:.1f}% vs 5%).")
-        if email_metrics["unsubscribe_rate"] > EMAIL_BENCHMARKS["unsubscribe_rate"][1]:
-            notes.append(f"Email unsubscribe rate is above the warning level ({email_metrics['unsubscribe_rate']:.2f}%).")
-        if email_metrics["bounce_rate"] > EMAIL_BENCHMARKS["bounce_rate"][1]:
-            notes.append(f"Email bounce rate is above the warning level ({email_metrics['bounce_rate']:.2f}%).")
-    if sms_metrics and sms_metrics["unsubscribe_rate"] > 1:
-        notes.append(f"SMS unsubscribe rate is above 1% ({sms_metrics['unsubscribe_rate']:.2f}%).")
-
-    if notes:
-        for note in notes:
-            st.warning(note)
+        st.info(f"No {selected_channel} performance metrics yet for the selected week range.")
     else:
-        st.success("No major performance warnings in the selected week range.")
+        render_funnel(performance_data, selected_channel, f"overview_{selected_channel.lower()}_funnel")
 
-    st.markdown("**Channel Summary**")
-    summary_table = channel_summary(data)
-    display_table = summary_table.copy()
-    rate_columns = ["Open Rate", "Click Rate", "Unsubscribe Rate", "Bounce Rate"]
-    for column in rate_columns:
-        display_table[column] = display_table[column].apply(
-            lambda value: "N/A" if pd.isna(value) else f"{value:.2f}%"
-        )
-    count_columns = ["Total Audience", "Campaign Rows", "Sent", "Delivered"]
-    for column in count_columns:
-        display_table[column] = display_table[column].apply(lambda value: f"{value:,.0f}")
-    st.dataframe(display_table, width="stretch", hide_index=True)
+    st.markdown("**Weekly Trends**")
+    summary = weekly_summary(performance_data)
 
-    st.markdown("**Recent Channel Trend**")
-    trend_data = channel_weekly.melt(
-        id_vars=["date", "date_tag", "channel"],
-        value_vars=["click_rate", "unsubscribe_rate"],
-        var_name="metric",
-        value_name="rate",
-    )
-    trend_data["metric"] = trend_data["metric"].map(
-        {
-            "click_rate": "Click Rate",
-            "unsubscribe_rate": "Unsubscribe Rate",
-        }
-    )
-    fig = px.line(
-        trend_data.dropna(subset=["rate"]),
-        x="date_tag",
-        y="rate",
-        color="channel",
-        line_dash="metric",
-        markers=True,
-        title="Click and Unsubscribe Rate by Channel",
-        category_orders={"date_tag": date_order(channel_weekly)},
-    )
-    fig.update_xaxes(title="Week")
-    fig.update_yaxes(title="Rate", ticksuffix="%")
-    st.plotly_chart(fig, width="stretch", key="overview_channel_rate_summary")
+    row1_left, row1_right = st.columns(2)
+    with row1_left:
+        if selected_channel == "Email":
+            render_rate_trend(
+                summary,
+                "open_rate",
+                "Open Rate Trend",
+                benchmark=True,
+                chart_key="overview_open_rate",
+            )
+        else:
+            render_rate_trend(
+                summary,
+                "click_rate",
+                "SMS Click Rate Trend",
+                chart_key="overview_sms_click_rate",
+            )
+    with row1_right:
+        if selected_channel == "Email":
+            render_rate_trend(
+                summary,
+                "click_rate",
+                "Click Rate Trend",
+                benchmark=True,
+                chart_key="overview_click_rate",
+            )
+        else:
+            render_rate_trend(
+                summary,
+                "unsubscribe_rate",
+                "SMS Unsubscribe Rate Trend",
+                chart_key="overview_sms_unsubscribe_rate",
+            )
+
+    if selected_channel == "Email":
+        row2_left, row2_right = st.columns(2)
+        with row2_left:
+            render_rate_trend(
+                summary,
+                "unsubscribe_rate",
+                "Unsubscribe Rate Trend",
+                benchmark=True,
+                chart_key="overview_unsubscribe_rate",
+            )
+        with row2_right:
+            render_rate_trend(
+                summary,
+                "bounce_rate",
+                "Bounce Rate Trend",
+                benchmark=True,
+                chart_key="overview_bounce_rate",
+            )
 
 
 def render_email_performance(data):
