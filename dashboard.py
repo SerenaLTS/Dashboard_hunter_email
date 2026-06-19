@@ -989,6 +989,11 @@ def render_audience_movement(data):
 
     st.caption("Total audience uses the Email audience base. SMS active audience is treated as the new-user batch size.")
 
+    data = data[data["audience_segment"].isin(["Build", "EOI", "Reservation"])].copy()
+    if data.empty:
+        st.info("No Build, EOI, or Reservation audience data for the selected week range.")
+        return
+
     data = apply_segment_filter(data, "Audience segment", "audience_segments")
     if data.empty:
         st.info("No audience data for the selected section filters.")
