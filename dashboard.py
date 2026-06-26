@@ -655,6 +655,11 @@ def render_email_engagement_change(data):
         f"Comparing latest Email result week {latest_week['date_tag']} "
         f"with previous result week {previous_week['date_tag']}."
     )
+    st.caption(
+        "Definition: this comparison uses Email/EDM results only; SMS is excluded because SMS does not provide Open Rate. "
+        "Each column shows that audience section's own engagement rate for the latest result week. "
+        "The delta compares the same section against the previous result week; these values are not averaged across sections."
+    )
 
     section_columns = st.columns(3)
     for column, segment in zip(section_columns, EMAIL_ENGAGEMENT_SEGMENTS):
@@ -943,6 +948,12 @@ def render_executive_overview(data, comparison_data=None, selected_period=None, 
     selected_channel = data["channel"].iloc[0]
 
     st.markdown("**Executive KPIs**")
+    st.caption(
+        "Definition: KPI rates are calculated for the selected channel, week range, and audience sections. "
+        "Open Rate applies to Email/EDM only because SMS does not provide open tracking. "
+        "When multiple sections are selected, rate KPIs are weighted overall rates based on delivered volume, "
+        "not a simple average of section rates. Bounce Rate is weighted by sent volume."
+    )
     render_primary_kpis(
         data,
         channel=selected_channel,
