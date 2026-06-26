@@ -608,12 +608,17 @@ def latest_email_engagement_comparison(data):
     email_data = data[
         (data["channel"] == "Email")
         & (data["audience_segment"].isin(EMAIL_ENGAGEMENT_SEGMENTS))
-        & (data["has_performance_data"])
     ].copy()
+    email_data = email_data[email_data[["open_rate", "click_rate"]].notna().any(axis=1)].copy()
     if email_data.empty:
         return pd.DataFrame(), None, None
 
-    result_weeks = email_data[["date", "date_tag"]].drop_duplicates().sort_values("date")
+    result_weeks = (
+        email_data.groupby(["date", "date_tag"], as_index=False)
+        .agg(result_sections=("audience_segment", "nunique"))
+        .sort_values("date")
+    )
+    result_weeks = result_weeks[result_weeks["result_sections"] == len(EMAIL_ENGAGEMENT_SEGMENTS)]
     if len(result_weeks) < 2:
         return pd.DataFrame(), None, None
 
