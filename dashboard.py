@@ -57,6 +57,8 @@ PERFORMANCE_COLUMNS = [
     "bounce_rate",
 ]
 
+EMAIL_ENGAGEMENT_SEGMENTS = ["Build", "EOI", "Reservation"]
+
 
 # --------------------------------
 # DATA CLEANING HELPERS
@@ -596,6 +598,119 @@ def format_rate(value, precision=1):
     return f"{value:.{precision}f}%"
 
 
+def format_point_delta(value, precision=1):
+    if pd.isna(value):
+        return None
+    return f"{value:+.{precision}f} pts vs previous week"
+
+
+def latest_email_engagement_comparison(data):
+    email_data = data[
+        (data["channel"] == "Email")
+        & (data["audience_segment"].isin(EMAIL_ENGAGEMENT_SEGMENTS))
+        & (data["has_performance_data"])
+    ].copy()
+    if email_data.empty:
+        return pd.DataFrame(), None, None
+
+    result_weeks = email_data[["date", "date_tag"]].drop_duplicates().sort_values("date")
+    if len(result_weeks) < 2:
+        return pd.DataFrame(), None, None
+
+    previous_week = result_weeks.iloc[-2]
+    latest_week = result_weeks.iloc[-1]
+
+    summary = weekly_summary(
+        email_data[email_data["date_tag"].isin([previous_week["date_tag"], latest_week["date_tag"]])]
+    )
+    current = summary[summary["date_tag"] == latest_week["date_tag"]].copy()
+    previous = summary[summary["date_tag"] == previous_week["date_tag"]].copy()
+
+    comparison = current.merge(
+        previous,
+        on="audience_segment",
+        suffixes=("_current", "_previous"),
+        how="outer",
+    )
+    for metric in ["open_rate", "click_rate", "unsubscribe_rate"]:
+        comparison[f"{metric}_change"] = comparison[f"{metric}_current"] - comparison[f"{metric}_previous"]
+
+    return comparison, latest_week, previous_week
+
+
+def render_email_engagement_change(data):
+    comparison, latest_week, previous_week = latest_email_engagement_comparison(data)
+
+    st.markdown("**Email Engagement Change by Audience Section**")
+    if comparison.empty:
+        st.info("Need at least two Email result weeks for Build, EOI, or Reservation to compare engagement changes.")
+        return
+
+    st.caption(
+        f"Comparing latest Email result week {latest_week['date_tag']} "
+        f"with previous result week {previous_week['date_tag']}."
+    )
+
+    section_columns = st.columns(3)
+    for column, segment in zip(section_columns, EMAIL_ENGAGEMENT_SEGMENTS):
+        segment_rows = comparison[comparison["audience_segment"] == segment]
+        with column:
+            st.markdown(f"**{segment}**")
+            if segment_rows.empty:
+                st.info("No result in one of the comparison weeks.")
+                continue
+
+            row = segment_rows.iloc[0]
+            st.metric(
+                "Open Rate",
+                format_rate(row["open_rate_current"]),
+                format_point_delta(row["open_rate_change"]),
+            )
+            st.metric(
+                "Click Rate",
+                format_rate(row["click_rate_current"]),
+                format_point_delta(row["click_rate_change"]),
+            )
+            st.metric(
+                "Unsubscribe Rate",
+                format_rate(row["unsubscribe_rate_current"], precision=2),
+                format_point_delta(row["unsubscribe_rate_change"], precision=2),
+                delta_color="inverse",
+            )
+
+    detail = comparison.copy()
+    table_columns = [
+        "audience_segment",
+        "delivered_current",
+        "open_rate_previous",
+        "open_rate_current",
+        "open_rate_change",
+        "click_rate_previous",
+        "click_rate_current",
+        "click_rate_change",
+        "unsubscribe_rate_previous",
+        "unsubscribe_rate_current",
+        "unsubscribe_rate_change",
+    ]
+    detail = detail[[col for col in table_columns if col in detail.columns]]
+    detail = detail.rename(
+        columns={
+            "audience_segment": "Audience Section",
+            "delivered_current": "Delivered",
+            "open_rate_previous": "Previous Open Rate",
+            "open_rate_current": "Latest Open Rate",
+            "open_rate_change": "Open Rate Change",
+            "click_rate_previous": "Previous Click Rate",
+            "click_rate_current": "Latest Click Rate",
+            "click_rate_change": "Click Rate Change",
+            "unsubscribe_rate_previous": "Previous Unsubscribe Rate",
+            "unsubscribe_rate_current": "Latest Unsubscribe Rate",
+            "unsubscribe_rate_change": "Unsubscribe Rate Change",
+        }
+    )
+    st.dataframe(detail, width="stretch", hide_index=True)
+
+
 def best_segment_phrase(summary, channel):
     if summary.empty:
         return "No segment performance data available yet."
@@ -804,11 +919,13 @@ def apply_channel_segment_filter_pair(data, comparison_data, key_prefix):
     return filtered_data, filtered_comparison
 
 
-def render_executive_overview(data, comparison_data=None, selected_period=None, comparison_period=None):
+def render_executive_overview(data, comparison_data=None, selected_period=None, comparison_period=None, full_data=None):
     st.subheader("Executive Overview")
     if data.empty:
         st.info("No data for the selected week range.")
         return
+
+    render_email_engagement_change(full_data if full_data is not None else data)
 
     if comparison_data is None:
         comparison_data = data.iloc[0:0].copy()
@@ -1273,6 +1390,7 @@ with overview_tab:
         previous_week_filtered,
         selected_period=(selected_period_start, selected_period_end),
         comparison_period=(comparison_period_start, comparison_period_end),
+        full_data=df,
     )
 
 with email_tab:
