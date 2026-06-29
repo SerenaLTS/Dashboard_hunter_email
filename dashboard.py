@@ -1153,26 +1153,39 @@ def render_audience_movement(events, snapshots, transitions):
         if selected_transitions.empty:
             st.info("No group movements occurred in the selected period.")
         else:
-            labels = selected_groups
-            label_index = {label: index for index, label in enumerate(labels)}
             flow = (
                 selected_transitions.groupby(["from_group", "to_group"], as_index=False)
                 .agg(people=("email", "nunique"))
+                .sort_values("people", ascending=True)
             )
-            sankey = go.Figure(
-                go.Sankey(
-                    node={"label": labels, "pad": 18, "thickness": 18},
-                    link={
-                        "source": flow["from_group"].map(label_index),
-                        "target": flow["to_group"].map(label_index),
-                        "value": flow["people"],
-                        "customdata": flow[["from_group", "to_group"]],
-                        "hovertemplate": "%{customdata[0]} → %{customdata[1]}<br>%{value} people<extra></extra>",
-                    },
-                )
+            flow["movement"] = flow["from_group"] + " → " + flow["to_group"]
+            movement_chart = px.bar(
+                flow,
+                x="people",
+                y="movement",
+                orientation="h",
+                text="people",
+                title="Movement Paths — Selected Period",
+                labels={"people": "People moved", "movement": ""},
+                color="people",
+                color_continuous_scale="Blues",
             )
-            sankey.update_layout(title="Group-to-Group Movement", height=430)
-            st.plotly_chart(sankey, width="stretch", key="digital_dealer_movement_sankey")
+            movement_chart.update_traces(
+                texttemplate="%{text:,.0f}",
+                textposition="outside",
+                hovertemplate="%{y}<br>%{x:,.0f} people<extra></extra>",
+            )
+            movement_chart.update_layout(
+                coloraxis_showscale=False,
+                height=max(360, 65 * len(flow)),
+                margin={"l": 10, "r": 35, "t": 55, "b": 45},
+            )
+            movement_chart.update_xaxes(rangemode="tozero")
+            st.plotly_chart(
+                movement_chart,
+                width="stretch",
+                key="digital_dealer_movement_paths",
+            )
 
     st.markdown("**Weekly Movement Matrix**")
     if selected_transitions.empty:
