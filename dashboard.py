@@ -1040,36 +1040,32 @@ def render_audience_movement(events, snapshots, transitions):
         st.info("No completed weeks are available yet. Include the current incomplete week.")
         return
 
-    groups = list(dict.fromkeys(snapshots["customer_group"].tolist()))
-    filter_col1, filter_col2 = st.columns([2, 3])
-    with filter_col1:
-        selected_groups = st.multiselect(
-            "Customer groups",
-            groups,
-            default=groups,
-            key="movement_groups",
-        )
+    journey_groups = ["JAC Hunter", "JAC Hunter Build", "JAC Hunter Reserve"]
     week_options = available["week_start"].drop_duplicates().sort_values().tolist()
     week_labels = {week: week.strftime("%Y-%m-%d") for week in week_options}
-    with filter_col2:
-        if len(week_options) == 1:
-            selected_start = selected_end = week_options[0]
-            st.selectbox("Week", week_options, format_func=week_labels.get)
-        else:
-            default_start = week_options[max(0, len(week_options) - 11)]
-            selected_start, selected_end = st.select_slider(
-                "Movement week range",
-                options=week_options,
-                value=(default_start, week_options[-1]),
-                format_func=week_labels.get,
-            )
 
-    if not selected_groups:
-        st.info("Select at least one customer group.")
-        return
+    st.markdown("**Audience Journey Funnel**")
+    funnel_slot = st.empty()
+    if len(week_options) == 1:
+        selected_start = selected_end = week_options[0]
+        st.selectbox(
+            "Funnel period",
+            week_options,
+            format_func=week_labels.get,
+            key="movement_funnel_single_week",
+        )
+    else:
+        default_start = week_options[max(0, len(week_options) - 11)]
+        selected_start, selected_end = st.select_slider(
+            "Funnel period",
+            options=week_options,
+            value=(default_start, week_options[-1]),
+            format_func=week_labels.get,
+            key="movement_funnel_period",
+        )
 
     visible = available[
-        available["customer_group"].isin(selected_groups)
+        available["customer_group"].isin(journey_groups)
         & available["week_start"].between(selected_start, selected_end)
     ].copy()
     visible["week_label"] = visible["week_start"].dt.strftime("%Y-%m-%d")
@@ -1079,8 +1075,8 @@ def render_audience_movement(events, snapshots, transitions):
 
     selected_transitions = transitions[
         transitions["week_start"].between(selected_start, selected_end)
-        & transitions["from_group"].isin(selected_groups)
-        & transitions["to_group"].isin(selected_groups)
+        & transitions["from_group"].isin(journey_groups)
+        & transitions["to_group"].isin(journey_groups)
     ].copy()
     if not include_partial:
         selected_transitions = selected_transitions[selected_transitions["week_complete"]]
@@ -1099,6 +1095,34 @@ def render_audience_movement(events, snapshots, transitions):
     latest_new = latest["new_people"].sum()
     moved_people = selected_transitions["email"].nunique()
     movement_events = len(selected_transitions)
+
+    funnel_counts = (
+        latest.set_index("customer_group")["active_people"]
+        .reindex(journey_groups, fill_value=0)
+    )
+    funnel = go.Figure(
+        go.Funnel(
+            y=["EOI · JAC Hunter", "Build", "Reserve"],
+            x=funnel_counts.tolist(),
+            textinfo="value+percent initial",
+            marker={"color": ["#7CB9E8", "#3F88C5", "#E84A5F"]},
+            hovertemplate="%{y}<br>%{x:,.0f} people<extra></extra>",
+        )
+    )
+    funnel.update_layout(
+        title=f"Audience Position at Week Ending {latest['week_end'].max().strftime('%Y-%m-%d')}",
+        height=390,
+        margin={"l": 20, "r": 20, "t": 65, "b": 20},
+    )
+    funnel_slot.plotly_chart(
+        funnel,
+        width="stretch",
+        key=f"digital_dealer_journey_funnel_{latest_week.strftime('%Y%m%d')}",
+    )
+    st.caption(
+        "The funnel is a stage-position snapshot at the end of the selected period. "
+        "Its slider is independent from the Email/SMS campaign filter in the sidebar."
+    )
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric(
@@ -1127,65 +1151,25 @@ def render_audience_movement(events, snapshots, transitions):
     area.update_layout(hovermode="x unified")
     st.plotly_chart(area, width="stretch", key="digital_dealer_audience_trend")
 
-    chart_left, chart_right = st.columns([3, 2])
-    with chart_left:
-        change_data = visible.dropna(subset=["net_change"])
-        if change_data.empty:
-            st.info("Select at least two weeks to see net group changes.")
-        else:
-            change = px.bar(
-                change_data,
-                x="week_label",
-                y="net_change",
-                color="customer_group",
-                barmode="group",
-                title="Weekly Net Change by Group",
-                labels={
-                    "week_label": "Week starting",
-                    "net_change": "Net audience change",
-                    "customer_group": "Customer group",
-                },
-            )
-            change.add_hline(y=0, line_color="#8A94A6", line_width=1)
-            st.plotly_chart(change, width="stretch", key="digital_dealer_group_net_change")
-
-    with chart_right:
-        if selected_transitions.empty:
-            st.info("No group movements occurred in the selected period.")
-        else:
-            flow = (
-                selected_transitions.groupby(["from_group", "to_group"], as_index=False)
-                .agg(people=("email", "nunique"))
-                .sort_values("people", ascending=True)
-            )
-            flow["movement"] = flow["from_group"] + " → " + flow["to_group"]
-            movement_chart = px.bar(
-                flow,
-                x="people",
-                y="movement",
-                orientation="h",
-                text="people",
-                title="Movement Paths — Selected Period",
-                labels={"people": "People moved", "movement": ""},
-                color="people",
-                color_continuous_scale="Blues",
-            )
-            movement_chart.update_traces(
-                texttemplate="%{text:,.0f}",
-                textposition="outside",
-                hovertemplate="%{y}<br>%{x:,.0f} people<extra></extra>",
-            )
-            movement_chart.update_layout(
-                coloraxis_showscale=False,
-                height=max(360, 65 * len(flow)),
-                margin={"l": 10, "r": 35, "t": 55, "b": 45},
-            )
-            movement_chart.update_xaxes(rangemode="tozero")
-            st.plotly_chart(
-                movement_chart,
-                width="stretch",
-                key="digital_dealer_movement_paths",
-            )
+    change_data = visible.dropna(subset=["net_change"])
+    if change_data.empty:
+        st.info("Select at least two weeks to see net group changes.")
+    else:
+        change = px.bar(
+            change_data,
+            x="week_label",
+            y="net_change",
+            color="customer_group",
+            barmode="group",
+            title="Weekly Net Change by Group",
+            labels={
+                "week_label": "Week starting",
+                "net_change": "Net audience change",
+                "customer_group": "Customer group",
+            },
+        )
+        change.add_hline(y=0, line_color="#8A94A6", line_width=1)
+        st.plotly_chart(change, width="stretch", key="digital_dealer_group_net_change")
 
     st.markdown("**Weekly Movement Matrix**")
     if selected_transitions.empty:

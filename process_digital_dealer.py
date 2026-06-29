@@ -104,16 +104,21 @@ def clean_events(raw):
 
     # Repeated submissions to the same group are events, but not group changes.
     events["previous_group"] = events.groupby("email")["customer_group"].shift()
+    events["previous_stage"] = events.groupby("email")["group_stage"].shift()
     events["is_first_seen"] = events["previous_group"].isna()
     events["is_group_change"] = (
         events["previous_group"].notna()
         & events["previous_group"].ne(events["customer_group"])
     )
+    events["is_forward_group_change"] = (
+        events["is_group_change"]
+        & events["group_stage"].gt(events["previous_stage"])
+    )
     return events, rejected
 
 
 def make_transitions(events):
-    transitions = events.loc[events["is_group_change"]].copy()
+    transitions = events.loc[events["is_forward_group_change"]].copy()
     transitions = transitions.rename(
         columns={
             "previous_group": "from_group",

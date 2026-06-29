@@ -3,7 +3,6 @@ week_start,week_end,week_complete,from_group,to_group,people_moved,transition_ev
 2026-05-04,2026-05-10,True,JAC Hunter,JAC Hunter Reserve,36,36
 2026-05-11,2026-05-17,True,JAC Hunter,JAC Hunter Build,4,4
 2026-05-11,2026-05-17,True,JAC Hunter,JAC Hunter Reserve,5,5
-2026-05-11,2026-05-17,True,JAC Hunter Build,JAC Hunter,1,1
 2026-05-18,2026-05-24,True,JAC Hunter,JAC Hunter Build,1,1
 2026-05-18,2026-05-24,True,JAC Hunter,JAC Hunter Reserve,2,2
 2026-05-25,2026-05-31,True,JAC Hunter,JAC Hunter Build,1,1
@@ -13,7 +12,6 @@ week_start,week_end,week_complete,from_group,to_group,people_moved,transition_ev
 2026-06-01,2026-06-07,True,JAC Hunter,JAC Hunter Reserve,3,3
 2026-06-08,2026-06-14,True,JAC Hunter,JAC Hunter Build,1,1
 2026-06-08,2026-06-14,True,JAC Hunter,JAC Hunter Reserve,1,1
-2026-06-08,2026-06-14,True,JAC Hunter Build,JAC Hunter,1,1
 2026-06-08,2026-06-14,True,JAC Hunter Build,JAC Hunter Reserve,1,1
 2026-06-15,2026-06-21,True,JAC Hunter,JAC Hunter Build,1,1
 2026-06-15,2026-06-21,True,JAC Hunter Build,JAC Hunter Reserve,1,1
