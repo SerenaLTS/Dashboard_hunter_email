@@ -6,6 +6,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from process_digital_dealer import (
+    clean_events,
+    find_source,
+    make_transitions,
+    make_weekly_snapshots,
+)
+
 
 # --------------------------------
 # PAGE SETUP
@@ -260,6 +267,15 @@ def load_database(file_modified_at=None):
     if path.exists():
         return pd.read_excel(path, sheet_name=DATA_SHEET)
     return make_sample_database()
+
+
+@st.cache_data
+def load_digital_dealer_data(source_path, file_modified_at=None):
+    raw = pd.read_csv(source_path, dtype=str, keep_default_na=False)
+    events, rejected = clean_events(raw)
+    transitions, transition_summary = make_transitions(events)
+    snapshots = make_weekly_snapshots(events)
+    return events, snapshots, transitions, transition_summary, rejected
 
 
 # --------------------------------
@@ -994,176 +1010,223 @@ def render_sms_performance(data):
     render_campaign_ranking(performance_data, "SMS")
 
 
-def render_audience_movement(data):
+def render_audience_movement(events, snapshots, transitions):
     st.subheader("Audience Movement")
-    if data.empty:
-        st.info("No audience data for the selected week range.")
+    if snapshots.empty:
+        st.info("No Digital Dealer audience data is available.")
         return
 
-    st.caption("Total audience uses the Email audience base. SMS active audience is treated as the new-user batch size.")
+    st.caption(
+        "Digital Dealer forms are mapped to three groups. Email is the unique customer ID; "
+        "a move is recorded when the same email later submits a form mapped to a different group."
+    )
 
-    data = data[data["audience_segment"].isin(["Build", "EOI", "Reservation"])].copy()
-    if data.empty:
-        st.info("No Build, EOI, or Reservation audience data for the selected week range.")
+    available = snapshots.copy()
+    available["week_start"] = pd.to_datetime(available["week_start"])
+    available["week_end"] = pd.to_datetime(available["week_end"])
+    transitions = transitions.copy()
+    transitions["week_start"] = pd.to_datetime(transitions["week_start"])
+    transitions["transition_datetime"] = pd.to_datetime(transitions["transition_datetime"])
+
+    include_partial = st.checkbox(
+        "Include current incomplete week",
+        value=False,
+        key="movement_include_partial",
+    )
+    if not include_partial:
+        available = available[available["week_complete"]]
+
+    if available.empty:
+        st.info("No completed weeks are available yet. Include the current incomplete week.")
         return
 
-    data = apply_segment_filter(data, "Audience segment", "audience_segments")
-    if data.empty:
-        st.info("No audience data for the selected section filters.")
-        return
-
-    email_audience = (
-        data[data["channel"] == "Email"]
-        .groupby(["date", "date_tag", "audience_segment"], as_index=False)
-        .agg(
-            active_audience=("active_audience", "max"),
+    groups = list(dict.fromkeys(snapshots["customer_group"].tolist()))
+    filter_col1, filter_col2 = st.columns([2, 3])
+    with filter_col1:
+        selected_groups = st.multiselect(
+            "Customer groups",
+            groups,
+            default=groups,
+            key="movement_groups",
         )
-        .sort_values(["date", "audience_segment"])
-    )
-
-    if email_audience.empty:
-        st.info("No Email audience base data for the selected filters.")
-        return
-
-    order = date_order(email_audience)
-    total_audience = (
-        email_audience.groupby(["date", "date_tag"], as_index=False)
-        .agg(active_audience=("active_audience", "sum"))
-        .sort_values("date")
-    )
-    total_audience["previous_audience"] = total_audience["active_audience"].shift(1)
-    total_audience["audience_change"] = (
-        total_audience["active_audience"] - total_audience["previous_audience"]
-    )
-
-    latest_audience_row = total_audience.iloc[-1]
-
-    unsubscribes = (
-        data.groupby(["date", "date_tag", "channel"], as_index=False)
-        .agg(
-            unsubscribes=("unsubscribes", "sum"),
-            delivered=("delivered", "sum"),
-        )
-        .sort_values(["date", "channel"])
-    )
-    unsubscribes["unsubscribe_rate"] = unsubscribes.apply(
-        lambda row: pct(row["unsubscribes"], row["delivered"]),
-        axis=1,
-    )
-    unsubscribes["unsubscribe_type"] = unsubscribes["channel"] + " Unsubscribes"
-
-    latest_unsubscribes = (
-        unsubscribes.sort_values("date")
-        .groupby("channel", as_index=False)
-        .tail(1)
-        .set_index("channel")
-    )
-
-    kpi1, kpi2, kpi3 = st.columns(3)
-    audience_delta_value = latest_audience_row["audience_change"]
-    kpi1.metric(
-        "Total Audience",
-        f"{latest_audience_row['active_audience']:,.0f}",
-        None if pd.isna(audience_delta_value) else f"{audience_delta_value:+,.0f} vs previous week",
-    )
-    for column, channel in [(kpi2, "Email"), (kpi3, "SMS")]:
-        if channel in latest_unsubscribes.index:
-            latest_row = latest_unsubscribes.loc[channel]
-            column.metric(
-                f"{channel} Unsubscribes",
-                f"{latest_row['unsubscribes']:,.0f}",
-                f"{latest_row['unsubscribe_rate']:.2f}% rate",
-                delta_color="off",
-            )
+    week_options = available["week_start"].drop_duplicates().sort_values().tolist()
+    week_labels = {week: week.strftime("%Y-%m-%d") for week in week_options}
+    with filter_col2:
+        if len(week_options) == 1:
+            selected_start = selected_end = week_options[0]
+            st.selectbox("Week", week_options, format_func=week_labels.get)
         else:
-            column.metric(f"{channel} Unsubscribes", "0", "No data", delta_color="off")
+            default_start = week_options[max(0, len(week_options) - 11)]
+            selected_start, selected_end = st.select_slider(
+                "Movement week range",
+                options=week_options,
+                value=(default_start, week_options[-1]),
+                format_func=week_labels.get,
+            )
 
-    audience_delta = total_audience.dropna(subset=["previous_audience"]).copy()
-    audience_delta["change_type"] = audience_delta["audience_change"].apply(
-        lambda value: "Increase" if value >= 0 else "Decrease"
-    )
+    if not selected_groups:
+        st.info("Select at least one customer group.")
+        return
 
-    if audience_delta.empty:
-        st.info("Select at least two weeks to see audience change.")
+    visible = available[
+        available["customer_group"].isin(selected_groups)
+        & available["week_start"].between(selected_start, selected_end)
+    ].copy()
+    visible["week_label"] = visible["week_start"].dt.strftime("%Y-%m-%d")
+    visible = visible.sort_values(["customer_group", "week_start"])
+    visible["previous_people"] = visible.groupby("customer_group")["active_people"].shift()
+    visible["net_change"] = visible["active_people"] - visible["previous_people"]
+
+    selected_transitions = transitions[
+        transitions["week_start"].between(selected_start, selected_end)
+        & transitions["from_group"].isin(selected_groups)
+        & transitions["to_group"].isin(selected_groups)
+    ].copy()
+    if not include_partial:
+        selected_transitions = selected_transitions[selected_transitions["week_complete"]]
+
+    latest_week = visible["week_start"].max()
+    latest = visible[visible["week_start"].eq(latest_week)]
+    previous_weeks = visible[visible["week_start"].lt(latest_week)]
+    if previous_weeks.empty:
+        total_delta = None
     else:
-        fig = px.bar(
-            audience_delta,
-            x="date_tag",
-            y="audience_change",
-            color="change_type",
-            title="Total Audience Change",
-            category_orders={"date_tag": order},
-            color_discrete_map={
-                "Increase": "#2E7D32",
-                "Decrease": "#C62828",
-            },
-            hover_data={
-                "previous_audience": ":,.0f",
-                "active_audience": ":,.0f",
-                "audience_change": "+,.0f",
-                "change_type": False,
-            },
+        previous_week = previous_weeks["week_start"].max()
+        total_delta = (
+            latest["active_people"].sum()
+            - previous_weeks[previous_weeks["week_start"].eq(previous_week)]["active_people"].sum()
         )
-        fig.add_hline(y=0, line_color="#8A94A6", line_width=1)
-        fig.update_xaxes(title="Week")
-        fig.update_yaxes(title="Audience Change")
-        st.plotly_chart(fig, width="stretch", key="audience_weekly_change")
+    latest_new = latest["new_people"].sum()
+    moved_people = selected_transitions["email"].nunique()
+    movement_events = len(selected_transitions)
 
-    fig = px.line(
-        total_audience,
-        x="date_tag",
-        y="active_audience",
-        markers=True,
-        title="Total Audience Trend",
-        category_orders={"date_tag": order},
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    kpi1.metric(
+        "Current Audience",
+        f"{latest['active_people'].sum():,.0f}",
+        None if total_delta is None else f"{total_delta:+,.0f} vs previous week",
     )
-    fig.update_xaxes(title="Week")
-    fig.update_yaxes(title="Active Audience")
-    st.plotly_chart(fig, width="stretch", key="audience_active_trend")
+    kpi2.metric("New People — Latest Week", f"{latest_new:,.0f}")
+    kpi3.metric("People Who Moved", f"{moved_people:,.0f}", "Selected period", delta_color="off")
+    kpi4.metric("Movement Events", f"{movement_events:,.0f}", "Selected period", delta_color="off")
 
-    fig = px.bar(
-        unsubscribes,
-        x="date_tag",
-        y="unsubscribes",
-        color="unsubscribe_type",
-        barmode="group",
-        title="Email vs SMS Unsubscribes",
-        category_orders={"date_tag": order},
-        color_discrete_map={
-            "Email Unsubscribes": "#1565C0",
-            "SMS Unsubscribes": "#6A1B9A",
+    area = px.area(
+        visible,
+        x="week_label",
+        y="active_people",
+        color="customer_group",
+        markers=True,
+        title="Weekly Audience by Group",
+        category_orders={"week_label": [week_labels[week] for week in week_options]},
+        labels={
+            "week_label": "Week starting",
+            "active_people": "People",
+            "customer_group": "Customer group",
         },
     )
-    fig.update_xaxes(title="Week")
-    fig.update_yaxes(title="Unsubscribes")
-    st.plotly_chart(fig, width="stretch", key="audience_unsubscribes_by_channel")
+    area.update_layout(hovermode="x unified")
+    st.plotly_chart(area, width="stretch", key="digital_dealer_audience_trend")
 
-    rate_data = unsubscribes[unsubscribes["delivered"] > 0].copy()
-    if rate_data.empty:
-        st.info("No delivered counts available to calculate unsubscribe rate.")
+    chart_left, chart_right = st.columns([3, 2])
+    with chart_left:
+        change_data = visible.dropna(subset=["net_change"])
+        if change_data.empty:
+            st.info("Select at least two weeks to see net group changes.")
+        else:
+            change = px.bar(
+                change_data,
+                x="week_label",
+                y="net_change",
+                color="customer_group",
+                barmode="group",
+                title="Weekly Net Change by Group",
+                labels={
+                    "week_label": "Week starting",
+                    "net_change": "Net audience change",
+                    "customer_group": "Customer group",
+                },
+            )
+            change.add_hline(y=0, line_color="#8A94A6", line_width=1)
+            st.plotly_chart(change, width="stretch", key="digital_dealer_group_net_change")
+
+    with chart_right:
+        if selected_transitions.empty:
+            st.info("No group movements occurred in the selected period.")
+        else:
+            labels = selected_groups
+            label_index = {label: index for index, label in enumerate(labels)}
+            flow = (
+                selected_transitions.groupby(["from_group", "to_group"], as_index=False)
+                .agg(people=("email", "nunique"))
+            )
+            sankey = go.Figure(
+                go.Sankey(
+                    node={"label": labels, "pad": 18, "thickness": 18},
+                    link={
+                        "source": flow["from_group"].map(label_index),
+                        "target": flow["to_group"].map(label_index),
+                        "value": flow["people"],
+                        "customdata": flow[["from_group", "to_group"]],
+                        "hovertemplate": "%{customdata[0]} → %{customdata[1]}<br>%{value} people<extra></extra>",
+                    },
+                )
+            )
+            sankey.update_layout(title="Group-to-Group Movement", height=430)
+            st.plotly_chart(sankey, width="stretch", key="digital_dealer_movement_sankey")
+
+    st.markdown("**Weekly Movement Matrix**")
+    if selected_transitions.empty:
+        st.info("No movement rows for the selected filters.")
     else:
-        fig = px.line(
-            rate_data,
-            x="date_tag",
-            y="unsubscribe_rate",
-            color="unsubscribe_type",
-            markers=True,
-            title="Email vs SMS Unsubscribe Rate",
-            category_orders={"date_tag": order},
-            color_discrete_map={
-                "Email Unsubscribes": "#1565C0",
-                "SMS Unsubscribes": "#6A1B9A",
-            },
+        movement_table = (
+            selected_transitions.assign(
+                week=lambda frame: frame["week_start"].dt.strftime("%Y-%m-%d"),
+                movement=lambda frame: frame["from_group"] + " → " + frame["to_group"],
+            )
+            .groupby(["week", "movement"], as_index=False)
+            .agg(people_moved=("email", "nunique"))
+            .pivot(index="week", columns="movement", values="people_moved")
+            .fillna(0)
+            .astype(int)
+            .sort_index(ascending=False)
         )
-        fig.update_xaxes(title="Week")
-        fig.update_yaxes(title="Unsubscribe Rate", ticksuffix="%")
-        st.plotly_chart(fig, width="stretch", key="audience_unsubscribe_rate_by_channel")
+        st.dataframe(movement_table, width="stretch")
 
-    st.dataframe(
-        email_audience.sort_values(["date", "audience_segment"], ascending=[False, True]),
-        width="stretch",
-        hide_index=True,
+    with st.expander("View person-level movement detail"):
+        if selected_transitions.empty:
+            st.info("No person-level movement detail for the selected filters.")
+        else:
+            detail = selected_transitions[
+                [
+                    "transition_datetime",
+                    "email",
+                    "from_group",
+                    "to_group",
+                    "form",
+                    "lead_id",
+                ]
+            ].sort_values("transition_datetime", ascending=False)
+            st.dataframe(detail, width="stretch", hide_index=True)
+            st.download_button(
+                "Download movement detail CSV",
+                detail.to_csv(index=False),
+                "digital_dealer_movement_detail.csv",
+                "text/csv",
+                key="download_movement_detail",
+            )
+
+    st.markdown("**Latest Group Snapshot**")
+    latest_table = latest[
+        ["customer_group", "active_people", "new_people", "net_change"]
+    ].rename(
+        columns={
+            "customer_group": "Customer Group",
+            "active_people": "Current Audience",
+            "new_people": "New People This Week",
+            "net_change": "Net Change",
+        }
     )
+    st.dataframe(latest_table, width="stretch", hide_index=True)
 
 
 # --------------------------------
@@ -1215,6 +1278,27 @@ database_path = Path(DATABASE_FILE)
 database_modified_at = database_path.stat().st_mtime if database_path.exists() else None
 raw_df = load_database(database_modified_at)
 df = clean_database(raw_df)
+
+try:
+    digital_dealer_path = find_source()
+    (
+        dealer_events,
+        dealer_snapshots,
+        dealer_transitions,
+        dealer_transition_summary,
+        dealer_rejected,
+    ) = load_digital_dealer_data(
+        str(digital_dealer_path),
+        digital_dealer_path.stat().st_mtime,
+    )
+    digital_dealer_error = None
+except (FileNotFoundError, ValueError, KeyError) as exc:
+    dealer_events = pd.DataFrame()
+    dealer_snapshots = pd.DataFrame()
+    dealer_transitions = pd.DataFrame()
+    dealer_transition_summary = pd.DataFrame()
+    dealer_rejected = pd.DataFrame()
+    digital_dealer_error = str(exc)
 
 if not database_path.exists():
     st.warning(f"`{DATABASE_FILE}` was not found. Showing sample data.")
@@ -1296,7 +1380,14 @@ with sms_tab:
     render_sms_performance(week_filtered[week_filtered["channel"] == "SMS"].copy())
 
 with audience_tab:
-    render_audience_movement(week_filtered)
+    if digital_dealer_error:
+        st.error(f"Digital Dealer data could not be loaded: {digital_dealer_error}")
+    else:
+        render_audience_movement(
+            dealer_events,
+            dealer_snapshots,
+            dealer_transitions,
+        )
 
 with raw_tab:
     st.subheader("Raw Database")

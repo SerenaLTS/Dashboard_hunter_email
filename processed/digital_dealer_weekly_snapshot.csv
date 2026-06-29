@@ -1,0 +1,76 @@
+week_start,week_end,week_complete,customer_group,active_people,new_people
+2026-01-12,2026-01-18,True,JAC Hunter Build,0,0
+2026-01-12,2026-01-18,True,JAC Hunter,2,2
+2026-01-12,2026-01-18,True,JAC Hunter Reserve,0,0
+2026-01-19,2026-01-25,True,JAC Hunter Build,0,0
+2026-01-19,2026-01-25,True,JAC Hunter,6,4
+2026-01-19,2026-01-25,True,JAC Hunter Reserve,0,0
+2026-01-26,2026-02-01,True,JAC Hunter Build,0,0
+2026-01-26,2026-02-01,True,JAC Hunter,6,0
+2026-01-26,2026-02-01,True,JAC Hunter Reserve,0,0
+2026-02-02,2026-02-08,True,JAC Hunter Build,0,0
+2026-02-02,2026-02-08,True,JAC Hunter,8,2
+2026-02-02,2026-02-08,True,JAC Hunter Reserve,0,0
+2026-02-09,2026-02-15,True,JAC Hunter Build,0,0
+2026-02-09,2026-02-15,True,JAC Hunter,8,0
+2026-02-09,2026-02-15,True,JAC Hunter Reserve,0,0
+2026-02-16,2026-02-22,True,JAC Hunter Build,0,0
+2026-02-16,2026-02-22,True,JAC Hunter,59,51
+2026-02-16,2026-02-22,True,JAC Hunter Reserve,0,0
+2026-02-23,2026-03-01,True,JAC Hunter Build,0,0
+2026-02-23,2026-03-01,True,JAC Hunter,75,16
+2026-02-23,2026-03-01,True,JAC Hunter Reserve,0,0
+2026-03-02,2026-03-08,True,JAC Hunter Build,0,0
+2026-03-02,2026-03-08,True,JAC Hunter,91,16
+2026-03-02,2026-03-08,True,JAC Hunter Reserve,0,0
+2026-03-09,2026-03-15,True,JAC Hunter Build,0,0
+2026-03-09,2026-03-15,True,JAC Hunter,106,15
+2026-03-09,2026-03-15,True,JAC Hunter Reserve,0,0
+2026-03-16,2026-03-22,True,JAC Hunter Build,0,0
+2026-03-16,2026-03-22,True,JAC Hunter,131,25
+2026-03-16,2026-03-22,True,JAC Hunter Reserve,0,0
+2026-03-23,2026-03-29,True,JAC Hunter Build,0,0
+2026-03-23,2026-03-29,True,JAC Hunter,214,83
+2026-03-23,2026-03-29,True,JAC Hunter Reserve,0,0
+2026-03-30,2026-04-05,True,JAC Hunter Build,0,0
+2026-03-30,2026-04-05,True,JAC Hunter,274,60
+2026-03-30,2026-04-05,True,JAC Hunter Reserve,0,0
+2026-04-06,2026-04-12,True,JAC Hunter Build,0,0
+2026-04-06,2026-04-12,True,JAC Hunter,360,86
+2026-04-06,2026-04-12,True,JAC Hunter Reserve,0,0
+2026-04-13,2026-04-19,True,JAC Hunter Build,0,0
+2026-04-13,2026-04-19,True,JAC Hunter,546,186
+2026-04-13,2026-04-19,True,JAC Hunter Reserve,0,0
+2026-04-20,2026-04-26,True,JAC Hunter Build,0,0
+2026-04-20,2026-04-26,True,JAC Hunter,643,97
+2026-04-20,2026-04-26,True,JAC Hunter Reserve,0,0
+2026-04-27,2026-05-03,True,JAC Hunter Build,0,0
+2026-04-27,2026-05-03,True,JAC Hunter,718,75
+2026-04-27,2026-05-03,True,JAC Hunter Reserve,0,0
+2026-05-04,2026-05-10,True,JAC Hunter Build,62,37
+2026-05-04,2026-05-10,True,JAC Hunter,754,97
+2026-05-04,2026-05-10,True,JAC Hunter Reserve,58,22
+2026-05-11,2026-05-17,True,JAC Hunter Build,81,16
+2026-05-11,2026-05-17,True,JAC Hunter,786,40
+2026-05-11,2026-05-17,True,JAC Hunter Reserve,66,3
+2026-05-18,2026-05-24,True,JAC Hunter Build,100,18
+2026-05-18,2026-05-24,True,JAC Hunter,810,27
+2026-05-18,2026-05-24,True,JAC Hunter Reserve,72,4
+2026-05-25,2026-05-31,True,JAC Hunter Build,110,11
+2026-05-25,2026-05-31,True,JAC Hunter,840,32
+2026-05-25,2026-05-31,True,JAC Hunter Reserve,75,0
+2026-06-01,2026-06-07,True,JAC Hunter Build,115,4
+2026-06-01,2026-06-07,True,JAC Hunter,857,21
+2026-06-01,2026-06-07,True,JAC Hunter Reserve,80,2
+2026-06-08,2026-06-14,True,JAC Hunter Build,120,6
+2026-06-08,2026-06-14,True,JAC Hunter,883,27
+2026-06-08,2026-06-14,True,JAC Hunter Reserve,82,0
+2026-06-15,2026-06-21,True,JAC Hunter Build,121,1
+2026-06-15,2026-06-21,True,JAC Hunter,903,21
+2026-06-15,2026-06-21,True,JAC Hunter Reserve,86,3
+2026-06-22,2026-06-28,True,JAC Hunter Build,126,4
+2026-06-22,2026-06-28,True,JAC Hunter,919,17
+2026-06-22,2026-06-28,True,JAC Hunter Reserve,88,2
+2026-06-29,2026-07-05,False,JAC Hunter Build,127,1
+2026-06-29,2026-07-05,False,JAC Hunter,918,0
+2026-06-29,2026-07-05,False,JAC Hunter Reserve,89,0
