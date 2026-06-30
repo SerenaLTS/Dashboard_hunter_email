@@ -418,31 +418,6 @@ def render_rate_trend(data, metric, title, benchmark=False, chart_key=None):
     st.plotly_chart(fig, width="stretch", key=chart_key or f"rate_{metric}_{title}")
 
 
-def render_funnel(data, channel, chart_key):
-    metrics = total_metrics(data)
-    if channel == "Email":
-        labels = ["Sent", "Delivered", "Opened", "Clicked", "Unsubscribed"]
-        values = [
-            metrics["sent"],
-            metrics["delivered"],
-            metrics["opens"],
-            metrics["clicks"],
-            metrics["unsubscribes"],
-        ]
-    else:
-        labels = ["Sent", "Delivered", "Clicked", "Unsubscribed"]
-        values = [
-            metrics["sent"],
-            metrics["delivered"],
-            metrics["clicks"],
-            metrics["unsubscribes"],
-        ]
-
-    fig = go.Figure(go.Funnel(y=labels, x=values, textinfo="value+percent initial"))
-    fig.update_layout(title=f"{channel} Funnel Snapshot", height=420)
-    st.plotly_chart(fig, width="stretch", key=chart_key)
-
-
 def render_volume_trend(data, channel, chart_key):
     summary = weekly_summary(data)
     if summary.empty:
@@ -826,7 +801,17 @@ def apply_channel_segment_filter_pair(data, comparison_data, key_prefix):
     return filtered_data, filtered_comparison
 
 
-def render_executive_overview(data, comparison_data=None, selected_period=None, comparison_period=None, full_data=None):
+def render_executive_overview(
+    data,
+    comparison_data=None,
+    selected_period=None,
+    comparison_period=None,
+    full_data=None,
+    dealer_events=None,
+    dealer_snapshots=None,
+    dealer_transitions=None,
+    digital_dealer_error=None,
+):
     st.subheader("Executive Overview")
     if data.empty:
         st.info("No data for the selected week range.")
@@ -878,11 +863,21 @@ def render_executive_overview(data, comparison_data=None, selected_period=None, 
             "No delta is shown because the database does not yet have enough earlier data for this selection."
         )
 
+    st.divider()
+    if digital_dealer_error:
+        st.error(f"Digital Dealer data could not be loaded: {digital_dealer_error}")
+    elif dealer_snapshots is not None:
+        render_audience_movement(
+            dealer_events,
+            dealer_snapshots,
+            dealer_transitions,
+        )
+
     performance_data = data[data["has_performance_data"]].copy()
     if performance_data.empty:
         st.info(f"No {selected_channel} performance metrics yet for the selected week range.")
     else:
-        render_funnel(performance_data, selected_channel, f"overview_{selected_channel.lower()}_funnel")
+        st.divider()
 
     st.markdown("**Weekly Trends**")
     summary = weekly_summary(performance_data)
@@ -1351,12 +1346,11 @@ if pd.notna(latest_tag):
 # --------------------------------
 # TABS
 # --------------------------------
-overview_tab, email_tab, sms_tab, audience_tab, raw_tab = st.tabs(
+overview_tab, email_tab, sms_tab, raw_tab = st.tabs(
     [
         "Executive Overview",
         "Email Performance",
         "SMS Performance",
-        "Audience Movement",
         "Raw Database",
     ]
 )
@@ -1368,6 +1362,10 @@ with overview_tab:
         selected_period=(selected_period_start, selected_period_end),
         comparison_period=(comparison_period_start, comparison_period_end),
         full_data=df,
+        dealer_events=dealer_events,
+        dealer_snapshots=dealer_snapshots,
+        dealer_transitions=dealer_transitions,
+        digital_dealer_error=digital_dealer_error,
     )
 
 with email_tab:
@@ -1375,16 +1373,6 @@ with email_tab:
 
 with sms_tab:
     render_sms_performance(week_filtered[week_filtered["channel"] == "SMS"].copy())
-
-with audience_tab:
-    if digital_dealer_error:
-        st.error(f"Digital Dealer data could not be loaded: {digital_dealer_error}")
-    else:
-        render_audience_movement(
-            dealer_events,
-            dealer_snapshots,
-            dealer_transitions,
-        )
 
 with raw_tab:
     st.subheader("Raw Database")
