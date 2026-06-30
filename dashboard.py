@@ -1022,6 +1022,8 @@ def render_audience_movement(events, snapshots, transitions):
     transitions = transitions.copy()
     transitions["week_start"] = pd.to_datetime(transitions["week_start"])
     transitions["transition_datetime"] = pd.to_datetime(transitions["transition_datetime"])
+    events = events.copy()
+    events["week_start"] = pd.to_datetime(events["week_start"])
 
     include_partial = st.checkbox(
         "Include current incomplete week",
@@ -1091,8 +1093,15 @@ def render_audience_movement(events, snapshots, transitions):
     moved_people = selected_transitions["email"].nunique()
     movement_events = len(selected_transitions)
 
+    period_events = events[
+        events["week_start"].between(selected_start, selected_end)
+        & events["customer_group"].isin(journey_groups)
+    ].copy()
+    if not include_partial:
+        period_events = period_events[period_events["week_complete"]]
     funnel_counts = (
-        latest.set_index("customer_group")["active_people"]
+        period_events.groupby("customer_group")["email"]
+        .nunique()
         .reindex(journey_groups, fill_value=0)
     )
     funnel = go.Figure(
@@ -1105,7 +1114,10 @@ def render_audience_movement(events, snapshots, transitions):
         )
     )
     funnel.update_layout(
-        title=f"Audience Position at Week Ending {latest['week_end'].max().strftime('%Y-%m-%d')}",
+        title=(
+            f"Unique Audience Reaching Each Stage · "
+            f"{selected_start.strftime('%Y-%m-%d')} to {selected_end.strftime('%Y-%m-%d')}"
+        ),
         height=390,
         margin={"l": 20, "r": 20, "t": 65, "b": 20},
     )
@@ -1115,8 +1127,8 @@ def render_audience_movement(events, snapshots, transitions):
         key=f"digital_dealer_journey_funnel_{latest_week.strftime('%Y%m%d')}",
     )
     st.caption(
-        "The funnel is a stage-position snapshot at the end of the selected period. "
-        "Its slider is independent from the Email/SMS campaign filter in the sidebar."
+        "The funnel counts unique emails that submitted the form for each stage during the selected weeks. "
+        "Both ends of this slider recalculate the funnel; it is independent from the Email/SMS sidebar filter."
     )
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
