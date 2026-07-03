@@ -1041,7 +1041,7 @@ def render_audience_movement(events, snapshots, transitions):
     week_options = available["week_start"].drop_duplicates().sort_values().tolist()
     week_labels = {week: week.strftime("%Y-%m-%d") for week in week_options}
 
-    st.markdown("**Audience Journey Funnel**")
+    st.markdown("**Audience Journey Flow**")
     funnel_slot = st.empty()
     if len(week_options) == 1:
         selected_start = selected_end = week_options[0]
@@ -1099,37 +1099,89 @@ def render_audience_movement(events, snapshots, transitions):
     ].copy()
     if not include_partial:
         period_events = period_events[period_events["week_complete"]]
-    funnel_counts = (
+    stage_counts = (
         period_events.groupby("customer_group")["email"]
         .nunique()
         .reindex(journey_groups, fill_value=0)
     )
-    funnel = go.Figure(
-        go.Funnel(
-            y=["EOI · JAC Hunter", "Build", "Reserve"],
-            x=funnel_counts.tolist(),
-            textinfo="value+percent initial",
-            marker={"color": ["#7CB9E8", "#3F88C5", "#E84A5F"]},
-            hovertemplate="%{y}<br>%{x:,.0f} people<extra></extra>",
+    stage_labels = ["EOI", "Build", "Reserve"]
+    group_indexes = {group: index for index, group in enumerate(journey_groups)}
+    flow_counts = (
+        selected_transitions.groupby(["from_group", "to_group"], as_index=False)
+        .agg(people=("email", "nunique"))
+        .sort_values(["from_group", "to_group"])
+    )
+    link_colors = {
+        ("JAC Hunter", "JAC Hunter Build"): "rgba(63, 136, 197, 0.50)",
+        ("JAC Hunter", "JAC Hunter Reserve"): "rgba(124, 185, 232, 0.38)",
+        ("JAC Hunter Build", "JAC Hunter Reserve"): "rgba(232, 74, 95, 0.48)",
+    }
+    flow = go.Figure(
+        go.Sankey(
+            arrangement="fixed",
+            node={
+                "label": [
+                    f"{label}<br>{stage_counts.iloc[index]:,.0f} reached stage"
+                    for index, label in enumerate(stage_labels)
+                ],
+                "x": [0.02, 0.50, 0.98],
+                "y": [0.50, 0.50, 0.50],
+                "pad": 30,
+                "thickness": 28,
+                "color": ["#7CB9E8", "#3F88C5", "#E84A5F"],
+                "line": {"color": "rgba(30, 45, 65, 0.35)", "width": 1},
+                "hovertemplate": "%{label}<extra></extra>",
+            },
+            link={
+                "source": [
+                    group_indexes[group] for group in flow_counts["from_group"]
+                ],
+                "target": [
+                    group_indexes[group] for group in flow_counts["to_group"]
+                ],
+                "value": flow_counts["people"].tolist(),
+                "label": [
+                    f"{stage_labels[group_indexes[row.from_group]]} → "
+                    f"{stage_labels[group_indexes[row.to_group]]}"
+                    for row in flow_counts.itertuples()
+                ],
+                "color": [
+                    link_colors.get(
+                        (row.from_group, row.to_group),
+                        "rgba(120, 130, 145, 0.40)",
+                    )
+                    for row in flow_counts.itertuples()
+                ],
+                "hovertemplate": "%{label}<br>%{value:,.0f} people moved<extra></extra>",
+            },
         )
     )
-    funnel.update_layout(
+    flow.update_layout(
         title=(
-            f"Unique Audience Reaching Each Stage · "
+            f"Email-Matched Movement Between Stages · "
             f"{selected_start.strftime('%Y-%m-%d')} to {selected_end.strftime('%Y-%m-%d')}"
         ),
         height=390,
         margin={"l": 20, "r": 20, "t": 65, "b": 20},
     )
     funnel_slot.plotly_chart(
-        funnel,
+        flow,
         width="stretch",
-        key=f"digital_dealer_journey_funnel_{latest_week.strftime('%Y%m%d')}",
+        key=f"digital_dealer_journey_flow_{latest_week.strftime('%Y%m%d')}",
     )
     st.caption(
-        "The funnel counts unique emails that submitted the form for each stage during the selected weeks. "
-        "Both ends of this slider recalculate the funnel; it is independent from the Email/SMS sidebar filter."
+        "Nodes show unique emails reaching each stage in the selected period. Arrows only appear when "
+        "the same email later submits a different-stage form; arrow width is the number of people who moved. "
+        "Both ends of the slider recalculate the flow independently from the Email/SMS sidebar filter."
     )
+    if not flow_counts.empty:
+        st.write(
+            " · ".join(
+                f"**{stage_labels[group_indexes[row.from_group]]} → "
+                f"{stage_labels[group_indexes[row.to_group]]}: {row.people:,.0f} people**"
+                for row in flow_counts.itertuples()
+            )
+        )
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric(
