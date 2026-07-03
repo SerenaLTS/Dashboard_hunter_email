@@ -1024,6 +1024,7 @@ def render_audience_movement(events, snapshots, transitions):
     transitions["transition_datetime"] = pd.to_datetime(transitions["transition_datetime"])
     events = events.copy()
     events["week_start"] = pd.to_datetime(events["week_start"])
+    events["lead_datetime"] = pd.to_datetime(events["lead_datetime"])
 
     include_partial = st.checkbox(
         "Include current incomplete week",
@@ -1101,69 +1102,126 @@ def render_audience_movement(events, snapshots, transitions):
     ].copy()
     if not include_partial:
         period_events = period_events[period_events["week_complete"]]
-    stage_counts = (
-        period_events.groupby("customer_group")["email"]
-        .nunique()
-        .reindex(journey_groups, fill_value=0)
+    period_end_exclusive = selected_end + pd.Timedelta(days=7)
+    cohort_entries = (
+        events[
+            events["customer_group"].eq("JAC Hunter")
+            & events["is_first_seen"].eq(True)
+            & events["lead_datetime"].ge(selected_start)
+            & events["lead_datetime"].lt(period_end_exclusive)
+        ]
+        .sort_values(["email", "lead_datetime", "lead_id"])
+        .groupby("email", as_index=False)
+        .first()[["email", "lead_datetime"]]
+        .rename(columns={"lead_datetime": "eoi_datetime"})
     )
-    stage_labels = ["EOI", "Build", "Reserve"]
-    group_indexes = {group: index for index, group in enumerate(journey_groups)}
-    flow_counts = (
-        selected_transitions.groupby(["from_group", "to_group"], as_index=False)
-        .agg(people=("email", "nunique"))
-        .sort_values(["from_group", "to_group"])
-    )
-    link_colors = {
-        ("JAC Hunter", "JAC Hunter Build"): "rgba(63, 136, 197, 0.50)",
-        ("JAC Hunter", "JAC Hunter Reserve"): "rgba(124, 185, 232, 0.38)",
-        ("JAC Hunter Build", "JAC Hunter Reserve"): "rgba(232, 74, 95, 0.48)",
-    }
+
+    cohort_rows = []
+    for entry in cohort_entries.itertuples():
+        later_events = events[
+            events["email"].eq(entry.email)
+            & events["lead_datetime"].ge(entry.eoi_datetime)
+            & events["lead_datetime"].lt(period_end_exclusive)
+        ]
+        build_dates = later_events.loc[
+            later_events["customer_group"].eq("JAC Hunter Build"),
+            "lead_datetime",
+        ]
+        reserve_dates = later_events.loc[
+            later_events["customer_group"].eq("JAC Hunter Reserve"),
+            "lead_datetime",
+        ]
+        build_datetime = build_dates.min() if not build_dates.empty else pd.NaT
+        reserve_datetime = reserve_dates.min() if not reserve_dates.empty else pd.NaT
+        reached_build = pd.notna(build_datetime)
+        reached_reserve = pd.notna(reserve_datetime)
+        reserve_via_build = (
+            reached_build
+            and reached_reserve
+            and reserve_datetime >= build_datetime
+        )
+        cohort_rows.append(
+            {
+                "email": entry.email,
+                "reached_build": reached_build,
+                "reached_reserve": reached_reserve,
+                "reserve_via_build": reserve_via_build,
+            }
+        )
+    cohort = pd.DataFrame(cohort_rows)
+    cohort_size = len(cohort)
+    if cohort.empty:
+        build_count = reserve_count = reserve_via_build_count = 0
+        direct_reserve_count = still_eoi_count = 0
+    else:
+        build_count = int(cohort["reached_build"].sum())
+        reserve_count = int(cohort["reached_reserve"].sum())
+        reserve_via_build_count = int(cohort["reserve_via_build"].sum())
+        direct_reserve_count = int(
+            (cohort["reached_reserve"] & ~cohort["reserve_via_build"]).sum()
+        )
+        still_eoi_count = int(
+            (~cohort["reached_build"] & ~cohort["reached_reserve"]).sum()
+        )
+
+    node_labels = [
+        f"NEW EOI COHORT<br><b>{cohort_size:,}</b>",
+        f"REACHED BUILD<br><b>{build_count:,}</b>",
+        f"REACHED RESERVE<br><b>{reserve_count:,}</b>",
+        f"STILL EOI<br><b>{still_eoi_count:,}</b>",
+    ]
+    flow_links = [
+        (0, 1, build_count, "EOI → Build", "rgba(63, 136, 197, 0.58)"),
+        (
+            1,
+            2,
+            reserve_via_build_count,
+            "Build → Reserve",
+            "rgba(232, 74, 95, 0.55)",
+        ),
+        (
+            0,
+            2,
+            direct_reserve_count,
+            "EOI → Reserve directly",
+            "rgba(124, 185, 232, 0.44)",
+        ),
+        (0, 3, still_eoi_count, "Still EOI", "rgba(145, 155, 170, 0.32)"),
+    ]
+    flow_links = [link for link in flow_links if link[2] > 0]
     flow = go.Figure(
         go.Sankey(
             arrangement="fixed",
+            textfont={"color": "#172033", "size": 15, "family": "Arial"},
             node={
-                "label": [
-                    f"{label}<br>{stage_counts.iloc[index]:,.0f} reached stage"
-                    for index, label in enumerate(stage_labels)
-                ],
-                "x": [0.02, 0.50, 0.98],
-                "y": [0.50, 0.50, 0.50],
+                "label": node_labels,
+                "x": [0.02, 0.50, 0.98, 0.50],
+                "y": [0.32, 0.18, 0.18, 0.72],
                 "pad": 30,
-                "thickness": 28,
-                "color": ["#7CB9E8", "#3F88C5", "#E84A5F"],
-                "line": {"color": "rgba(30, 45, 65, 0.35)", "width": 1},
+                "thickness": 32,
+                "color": ["#7CB9E8", "#3F88C5", "#E84A5F", "#AEB7C4"],
+                "line": {"color": "#334155", "width": 1.5},
                 "hovertemplate": "%{label}<extra></extra>",
             },
             link={
-                "source": [
-                    group_indexes[group] for group in flow_counts["from_group"]
-                ],
-                "target": [
-                    group_indexes[group] for group in flow_counts["to_group"]
-                ],
-                "value": flow_counts["people"].tolist(),
-                "label": [
-                    f"{stage_labels[group_indexes[row.from_group]]} → "
-                    f"{stage_labels[group_indexes[row.to_group]]}"
-                    for row in flow_counts.itertuples()
-                ],
-                "color": [
-                    link_colors.get(
-                        (row.from_group, row.to_group),
-                        "rgba(120, 130, 145, 0.40)",
-                    )
-                    for row in flow_counts.itertuples()
-                ],
+                "source": [link[0] for link in flow_links],
+                "target": [link[1] for link in flow_links],
+                "value": [link[2] for link in flow_links],
+                "label": [link[3] for link in flow_links],
+                "color": [link[4] for link in flow_links],
                 "hovertemplate": "%{label}<br>%{value:,.0f} people moved<extra></extra>",
             },
         )
     )
     flow.update_layout(
         title=(
-            f"Email-Matched Movement Between Stages · "
+            f"New EOI Cohort Progress by Period End · "
             f"{selected_start.strftime('%Y-%m-%d')} to {selected_end.strftime('%Y-%m-%d')}"
         ),
-        height=390,
+        height=430,
+        paper_bgcolor="#FFFFFF",
+        plot_bgcolor="#FFFFFF",
+        font={"color": "#172033"},
         margin={"l": 20, "r": 20, "t": 65, "b": 20},
     )
     funnel_slot.plotly_chart(
@@ -1177,18 +1235,16 @@ def render_audience_movement(events, snapshots, transitions):
         "Digital Dealer does not provide this data."
     )
     st.caption(
-        "Nodes show unique emails reaching each stage in the selected period. Arrows only appear when "
-        "the same email later submits a different-stage form; arrow width is the number of people who moved. "
-        "Both ends of the slider recalculate the flow independently from the Email/SMS sidebar filter."
+        "EOI is the unique-email cohort that first submitted an EOI form within the selected period—not "
+        "the historical total. Build and Reserve show how many people from that cohort reached each stage "
+        "by the end of the selected period. Arrow width represents the number of people."
     )
-    if not flow_counts.empty:
-        st.write(
-            " · ".join(
-                f"**{stage_labels[group_indexes[row.from_group]]} → "
-                f"{stage_labels[group_indexes[row.to_group]]}: {row.people:,.0f} people**"
-                for row in flow_counts.itertuples()
-            )
-        )
+    st.write(
+        f"**New EOI cohort: {cohort_size:,}** · "
+        f"**EOI → Build: {build_count:,}** · "
+        f"**Reached Reserve: {reserve_count:,}** · "
+        f"**Still EOI: {still_eoi_count:,}**"
+    )
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric(
