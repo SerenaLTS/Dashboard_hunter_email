@@ -1164,65 +1164,98 @@ def render_audience_movement(events, snapshots, transitions):
             (~cohort["reached_build"] & ~cohort["reached_reserve"]).sum()
         )
 
-    node_labels = [
-        f"NEW EOI COHORT<br><b>{cohort_size:,}</b>",
-        f"REACHED BUILD<br><b>{build_count:,}</b>",
-        f"REACHED RESERVE<br><b>{reserve_count:,}</b>",
-        f"STILL EOI<br><b>{still_eoi_count:,}</b>",
-    ]
-    flow_links = [
-        (0, 1, build_count, "EOI → Build", "rgba(63, 136, 197, 0.58)"),
-        (
-            1,
-            2,
-            reserve_via_build_count,
-            "Build → Reserve",
-            "rgba(232, 74, 95, 0.55)",
-        ),
-        (
-            0,
-            2,
-            direct_reserve_count,
-            "EOI → Reserve directly",
-            "rgba(124, 185, 232, 0.44)",
-        ),
-        (0, 3, still_eoi_count, "Still EOI", "rgba(145, 155, 170, 0.32)"),
-    ]
-    flow_links = [link for link in flow_links if link[2] > 0]
+    stage_labels = ["EOI", "BUILD", "RESERVE"]
+    group_indexes = {group: index for index, group in enumerate(journey_groups)}
+    movement_counts = (
+        selected_transitions.groupby(["from_group", "to_group"], as_index=False)
+        .agg(people=("email", "nunique"))
+        .sort_values(["from_group", "to_group"])
+    )
+    movement_colors = {
+        ("JAC Hunter", "JAC Hunter Build"): "rgba(42, 130, 196, 0.62)",
+        ("JAC Hunter", "JAC Hunter Reserve"): "rgba(111, 183, 224, 0.48)",
+        ("JAC Hunter Build", "JAC Hunter Reserve"): "rgba(226, 67, 93, 0.62)",
+    }
+    movement_lookup = {
+        (row.from_group, row.to_group): row.people
+        for row in movement_counts.itertuples()
+    }
+    label_positions = {
+        ("JAC Hunter", "JAC Hunter Build"): (0.27, 0.68),
+        ("JAC Hunter Build", "JAC Hunter Reserve"): (0.73, 0.68),
+        ("JAC Hunter", "JAC Hunter Reserve"): (0.50, 0.25),
+    }
     flow = go.Figure(
         go.Sankey(
             arrangement="fixed",
-            textfont={"color": "#172033", "size": 15, "family": "Arial"},
+            textfont={"color": "#172033", "size": 16, "family": "Arial"},
             node={
-                "label": node_labels,
-                "x": [0.02, 0.50, 0.98, 0.50],
-                "y": [0.32, 0.18, 0.18, 0.72],
-                "pad": 30,
-                "thickness": 32,
-                "color": ["#7CB9E8", "#3F88C5", "#E84A5F", "#AEB7C4"],
+                "label": stage_labels,
+                "x": [0.03, 0.50, 0.97],
+                "y": [0.48, 0.48, 0.48],
+                "pad": 36,
+                "thickness": 34,
+                "color": ["#78B7E3", "#2A82C4", "#E2435D"],
                 "line": {"color": "#334155", "width": 1.5},
                 "hovertemplate": "%{label}<extra></extra>",
             },
             link={
-                "source": [link[0] for link in flow_links],
-                "target": [link[1] for link in flow_links],
-                "value": [link[2] for link in flow_links],
-                "label": [link[3] for link in flow_links],
-                "color": [link[4] for link in flow_links],
+                "source": [
+                    group_indexes[row.from_group]
+                    for row in movement_counts.itertuples()
+                ],
+                "target": [
+                    group_indexes[row.to_group]
+                    for row in movement_counts.itertuples()
+                ],
+                "value": movement_counts["people"].tolist(),
+                "label": [
+                    f"{stage_labels[group_indexes[row.from_group]]} → "
+                    f"{stage_labels[group_indexes[row.to_group]]}"
+                    for row in movement_counts.itertuples()
+                ],
+                "color": [
+                    movement_colors.get(
+                        (row.from_group, row.to_group),
+                        "rgba(120, 130, 145, 0.45)",
+                    )
+                    for row in movement_counts.itertuples()
+                ],
                 "hovertemplate": "%{label}<br>%{value:,.0f} people moved<extra></extra>",
             },
         )
     )
     flow.update_layout(
         title=(
-            f"New EOI Cohort Progress by Period End · "
+            f"Email-Matched Stage Movements · "
             f"{selected_start.strftime('%Y-%m-%d')} to {selected_end.strftime('%Y-%m-%d')}"
         ),
-        height=430,
+        height=340,
         paper_bgcolor="#FFFFFF",
         plot_bgcolor="#FFFFFF",
         font={"color": "#172033"},
         margin={"l": 20, "r": 20, "t": 65, "b": 20},
+        annotations=[
+            {
+                "x": label_positions[path][0],
+                "y": label_positions[path][1],
+                "xref": "paper",
+                "yref": "paper",
+                "text": (
+                    f"<b>{stage_labels[group_indexes[path[0]]]} → "
+                    f"{stage_labels[group_indexes[path[1]]]}</b><br>"
+                    f"{people:,} people"
+                ),
+                "showarrow": False,
+                "font": {"size": 13, "color": "#172033"},
+                "bgcolor": "rgba(255,255,255,0.92)",
+                "bordercolor": "rgba(51,65,85,0.25)",
+                "borderwidth": 1,
+                "borderpad": 5,
+            }
+            for path, people in movement_lookup.items()
+            if path in label_positions
+        ],
     )
     funnel_slot.plotly_chart(
         flow,
@@ -1235,9 +1268,9 @@ def render_audience_movement(events, snapshots, transitions):
         "Digital Dealer does not provide this data."
     )
     st.caption(
-        "EOI is the unique-email cohort that first submitted an EOI form within the selected period—not "
-        "the historical total. Build and Reserve show how many people from that cohort reached each stage "
-        "by the end of the selected period. Arrow width represents the number of people."
+        "Cohort summary: EOI is the unique-email audience first added during the selected period—not the "
+        "historical total. Reached Build and Reached Reserve show that cohort's progress by period end. "
+        "Flow chart: arrows show all email-matched stage changes recorded during the selected period."
     )
     st.write(
         f"**New EOI cohort: {cohort_size:,}** · "
@@ -1245,6 +1278,17 @@ def render_audience_movement(events, snapshots, transitions):
         f"**Reached Reserve: {reserve_count:,}** · "
         f"**Still EOI: {still_eoi_count:,}**"
     )
+    if movement_counts.empty:
+        st.info("No email-matched stage changes occurred during the selected period.")
+    else:
+        st.write(
+            "Actual movements: "
+            + " · ".join(
+                f"**{stage_labels[group_indexes[row.from_group]]} → "
+                f"{stage_labels[group_indexes[row.to_group]]}: {row.people:,}**"
+                for row in movement_counts.itertuples()
+            )
+        )
 
     kpi1, kpi2, kpi3, kpi4 = st.columns(4)
     kpi1.metric(
