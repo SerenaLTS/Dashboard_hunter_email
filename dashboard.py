@@ -1025,11 +1025,12 @@ def render_audience_movement(events, snapshots, transitions):
     events = events.copy()
     events["week_start"] = pd.to_datetime(events["week_start"])
     events["lead_datetime"] = pd.to_datetime(events["lead_datetime"])
+    data_through_date = events["lead_datetime"].max().normalize()
 
     include_partial = st.checkbox(
-        "Include current incomplete week",
-        value=False,
-        key="movement_include_partial",
+        f"Include current week (data through {data_through_date.strftime('%Y-%m-%d')})",
+        value=True,
+        key="movement_include_partial_v2",
     )
     if not include_partial:
         available = available[available["week_complete"]]
@@ -1041,6 +1042,13 @@ def render_audience_movement(events, snapshots, transitions):
     journey_groups = ["JAC Hunter", "JAC Hunter Build", "JAC Hunter Reserve"]
     week_options = available["week_start"].drop_duplicates().sort_values().tolist()
     week_labels = {week: week.strftime("%Y-%m-%d") for week in week_options}
+    period_labels = {
+        week: (
+            f"{week.strftime('%Y-%m-%d')} – "
+            f"{min(week + pd.Timedelta(days=6), data_through_date).strftime('%Y-%m-%d')}"
+        )
+        for week in week_options
+    }
 
     st.markdown("**Audience Journey Flow**")
     flow_chart_column, flow_note_column = st.columns([4, 1])
@@ -1049,18 +1057,18 @@ def render_audience_movement(events, snapshots, transitions):
     if len(week_options) == 1:
         selected_start = selected_end = week_options[0]
         st.selectbox(
-            "Funnel period",
+            "Journey period",
             week_options,
-            format_func=week_labels.get,
+            format_func=period_labels.get,
             key="movement_funnel_single_week",
         )
     else:
         default_start = week_options[max(0, len(week_options) - 11)]
         selected_start, selected_end = st.select_slider(
-            "Funnel period",
+            "Journey period",
             options=week_options,
             value=(default_start, week_options[-1]),
-            format_func=week_labels.get,
+            format_func=period_labels.get,
             key="movement_funnel_period",
         )
 
@@ -1102,7 +1110,11 @@ def render_audience_movement(events, snapshots, transitions):
     ].copy()
     if not include_partial:
         period_events = period_events[period_events["week_complete"]]
-    period_end_exclusive = selected_end + pd.Timedelta(days=7)
+    display_period_end = min(
+        selected_end + pd.Timedelta(days=6),
+        data_through_date,
+    )
+    period_end_exclusive = display_period_end + pd.Timedelta(days=1)
     cohort_entries = (
         events[
             events["customer_group"].eq("JAC Hunter")
@@ -1228,7 +1240,7 @@ def render_audience_movement(events, snapshots, transitions):
     flow.update_layout(
         title=(
             f"Email-Matched Stage Movements · "
-            f"{selected_start.strftime('%Y-%m-%d')} to {selected_end.strftime('%Y-%m-%d')}"
+            f"{selected_start.strftime('%Y-%m-%d')} to {display_period_end.strftime('%Y-%m-%d')}"
         ),
         height=340,
         paper_bgcolor="#FFFFFF",
