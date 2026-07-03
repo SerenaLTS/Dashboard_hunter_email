@@ -1042,7 +1042,9 @@ def render_audience_movement(events, snapshots, transitions):
     week_labels = {week: week.strftime("%Y-%m-%d") for week in week_options}
 
     st.markdown("**Audience Journey Flow**")
-    funnel_slot = st.empty()
+    flow_chart_column, flow_note_column = st.columns([4, 1])
+    funnel_slot = flow_chart_column.empty()
+    flow_note_slot = flow_note_column.empty()
     if len(week_options) == 1:
         selected_start = selected_end = week_options[0]
         st.selectbox(
@@ -1168,6 +1170,11 @@ def render_audience_movement(events, snapshots, transitions):
         flow,
         width="stretch",
         key=f"digital_dealer_journey_flow_{latest_week.strftime('%Y%m%d')}",
+    )
+    flow_note_slot.info(
+        "Data note\n\n"
+        "This chart does not include unsubscribe records or unsubscribe counts. "
+        "Digital Dealer does not provide this data."
     )
     st.caption(
         "Nodes show unique emails reaching each stage in the selected period. Arrows only appear when "
