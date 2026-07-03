@@ -61,6 +61,26 @@ def parse_lead_datetime(values):
 
 def clean_events(raw):
     data = raw.copy()
+    # Digital Dealer exports can omit optional columns between downloads.
+    # Add them as blanks so a schema change does not prevent the dashboard
+    # from refreshing.
+    for source_column in [
+        "Lead ID",
+        "Form",
+        "Name",
+        "Surname",
+        "Phone",
+        "Location",
+        "Postcode",
+        "State",
+        "Status",
+        "Deposit",
+        "Source URL",
+        "Submission URL",
+    ]:
+        if source_column not in data.columns:
+            data[source_column] = ""
+
     data["form_key"] = data["Form"].astype(str).str.strip().str.lower()
     unknown_forms = sorted(set(data["form_key"]) - set(FORM_GROUP_MAP))
     if unknown_forms:
@@ -207,6 +227,10 @@ def main():
     )
     if not rejected.empty:
         rejected.to_csv(OUTPUT_DIR / "digital_dealer_rejected.csv", index=False)
+    else:
+        rejected_path = OUTPUT_DIR / "digital_dealer_rejected.csv"
+        if rejected_path.exists():
+            rejected_path.unlink()
 
     print(f"Source: {source}")
     print(f"Clean events: {len(events):,}")
